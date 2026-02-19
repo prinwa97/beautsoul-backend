@@ -1,24 +1,35 @@
+// lib/prisma.ts
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = global as unknown as {
-  prisma: PrismaClient | undefined;
-};
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined;
+}
 
-function createPrisma() {
-  // 👇 Vercel build phase safety
-  if (!process.env.DATABASE_URL) {
-    console.warn("⚠️ DATABASE_URL missing (build phase), skipping prisma init");
-    return undefined as any;
-  }
+function getClient() {
+  if (global.__prisma) return global.__prisma;
 
-  return new PrismaClient({
+  const client = new PrismaClient({
     log: ["error"],
   });
+
+  // dev me reuse (hot reload)
+  if (process.env.NODE_ENV !== "production") {
+    global.__prisma = client;
+  }
+
+  return client;
 }
 
-export const prisma =
-  globalForPrisma.prisma ?? createPrisma();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
+/**
+ * Lazy Prisma:
+ * - PrismaClient import-time pe create nahi hota
+ * - First actual query call pe create hota
+ * - Vercel build phase crash avoid
+ */
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getClient() as any;
+    return client[prop];
+  },
+});
