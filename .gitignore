@@ -38,3 +38,7 @@ node_modules/.prisma/
 # TypeScript build cache
 tsconfig.tsbuildinfo
 *.tsbuildinfo
+
+# PWA generated
+public/sw.js
+public/workbox-*.js
