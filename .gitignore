@@ -34,3 +34,7 @@ save/
 
 # prisma generated
 node_modules/.prisma/
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
+*.tsbuildinfo
