@@ -1,0 +1,469 @@
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+
+type OrderItem = {
+  id: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  rate: number;
+  amount: number;
+};
+
+type PaymentInfo = {
+  status: "UNPAID" | "PARTIAL" | "PAID";
+  paidAmount: number;
+  mode?: string | null;
+  refNo?: string | null;
+  paidAt?: string | null;
+  enteredByName?: string | null;
+  verified: boolean;
+  verifiedAt?: string | null;
+  verifiedByName?: string | null;
+};
+
+type Order = {
+  id: string;
+  orderNo: string;
+  distributorName: string;
+  totalAmount: number;
+  orderStatus: "CREATED" | "PAYMENT_VERIFIED" | "DISPATCHED";
+  payment: PaymentInfo;
+  items: OrderItem[];
+};
+
+type Msg = { type: "ok" | "err"; text: string } | null;
+
+function fmtINR(n: number) {
+  try { return n.toLocaleString("en-IN"); } catch { return String(n); }
+}
+function onlyDate(iso?: string | null) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(+d)) return iso;
+  return d.toLocaleDateString("en-IN");
+}
+
+export default function WarehouseOrderReceivePage() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<Msg>(null);
+
+  const [payOpen, setPayOpen] = useState(false);
+  const [dispatchOpen, setDispatchOpen] = useState(false);
+  const [selected, setSelected] = useState<Order | null>(null);
+
+  const [payChecked, setPayChecked] = useState(false);
+
+  type BatchRow = { rowId: string; qty: string; batchNo: string; mfg: string; exp: string };
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
+
+  const [transportType, setTransportType] = useState<"TRANSPORT" | "COURIER" | "SELF">("TRANSPORT");
+  const [carrierName, setCarrierName] = useState("");
+  const [trackingNo, setTrackingNo] = useState("");
+  const [vehicleNo, setVehicleNo] = useState("");
+  const [driverPhone, setDriverPhone] = useState("");
+  const [remarks, setRemarks] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const r = await fetch("/api/warehouse/orders/pending", { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Failed to load");
+      setOrders(j.orders || []);
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Load failed" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  const rows = useMemo(() => orders, [orders]);
+
+  function openPayment(o: Order) {
+    setSelected(o);
+    setPayChecked(false);
+    setPayOpen(true);
+  }
+
+  function openDispatch(o: Order) {
+    setSelected(o);
+    setTransportType("TRANSPORT");
+    setCarrierName("");
+    setTrackingNo("");
+    setVehicleNo("");
+    setDriverPhone("");
+    setRemarks("");
+    setBatchRows([]);
+    setDispatchOpen(true);
+  }
+
+  async function verifyPayment() {
+    if (!selected) return;
+    if (!payChecked) {
+      setMsg({ type: "err", text: "Checkbox tick karke verify karo." });
+      return;
+    }
+    try {
+      setLoading(true);
+      const r = await fetch(`/api/warehouse/orders/${selected.id}/verify-payment`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ verified: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Verify failed");
+      setPayOpen(false);
+      setSelected(null);
+      setMsg({ type: "ok", text: "Payment verified ✅" });
+      await load();
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Verify failed" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function addBatchRow() {
+    setBatchRows((p) => [
+      ...p,
+      { rowId: crypto.randomUUID(), qty: "", batchNo: "", mfg: "", exp: "" },
+    ]);
+  }
+  function updateBatchRow(rowId: string, patch: Partial<BatchRow>) {
+    setBatchRows((p) => p.map((r) => (r.rowId === rowId ? { ...r, ...patch } : r)));
+  }
+  function removeBatchRow(rowId: string) {
+    setBatchRows((p) => p.filter((r) => r.rowId !== rowId));
+  }
+
+  async function confirmDispatch() {
+    if (!selected) return;
+
+    if ((transportType === "TRANSPORT" || transportType === "COURIER") && (!carrierName || !trackingNo)) {
+      setMsg({ type: "err", text: "Carrier name + Tracking/LR/AWB required." });
+      return;
+    }
+
+    if (batchRows.length === 0) {
+      setMsg({ type: "err", text: "कम से कम 1 batch row add karo." });
+      return;
+    }
+
+    for (const r of batchRows) {
+      const q = Number(r.qty);
+      if (!q || q <= 0) return setMsg({ type: "err", text: "Batch qty valid do." });
+      if (!r.batchNo.trim()) return setMsg({ type: "err", text: "Batch no required." });
+      if (!r.mfg) return setMsg({ type: "err", text: "MFG date required." });
+      if (!r.exp) return setMsg({ type: "err", text: "EXP date required." });
+      if (new Date(r.exp) <= new Date(r.mfg)) return setMsg({ type: "err", text: "EXP date MFG se badi honi chahiye." });
+    }
+
+    const firstItem = selected.items?.[0];
+    if (!firstItem) {
+      setMsg({ type: "err", text: "Order items missing." });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const payload = {
+        transportType,
+        carrierName,
+        trackingNo,
+        vehicleNo,
+        driverPhone,
+        remarks,
+        batches: batchRows.map((r) => ({
+          productId: firstItem.productId,
+          qty: Number(r.qty),
+          batchNo: r.batchNo.trim(),
+          mfgDate: r.mfg,
+          expDate: r.exp,
+        })),
+      };
+
+      const r = await fetch(`/api/warehouse/orders/${selected.id}/dispatch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Dispatch failed");
+
+      setDispatchOpen(false);
+      setSelected(null);
+      setMsg({ type: "ok", text: "Dispatch done ✅" });
+      await load();
+    } catch (e: any) {
+      setMsg({ type: "err", text: e?.message || "Dispatch failed" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[#fff7f6]">
+      <div className="max-w-7xl mx-auto p-4 md:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl md:text-2xl font-semibold">Warehouse • Order Receive / Dispatch</h1>
+            <div className="text-sm text-gray-700 mt-1">
+              Flow: Payment verify → Dispatch (batch + tracking) → Distributor stock increase
+            </div>
+          </div>
+
+          <button
+            onClick={load}
+            className="px-3 py-2 rounded-lg bg-black text-white text-sm hover:opacity-90"
+            disabled={loading}
+          >
+            Refresh
+          </button>
+        </div>
+
+        {msg && (
+          <div className={`mt-4 p-3 rounded-lg text-sm ${msg.type === "ok" ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"}`}>
+            {msg.text}
+          </div>
+        )}
+
+        <div className="mt-4 bg-white border rounded-2xl shadow-sm overflow-hidden">
+          <div className="p-3 border-b flex items-center justify-between">
+            <div className="font-medium">Pending / Paid Orders</div>
+            <div className="text-xs text-gray-600">{loading ? "Loading..." : `${rows.length} orders`}</div>
+          </div>
+
+          <div className="overflow-auto">
+            <table className="min-w-[980px] w-full text-sm">
+              <thead className="bg-gray-50 text-gray-700">
+                <tr>
+                  <th className="text-left p-3">Order</th>
+                  <th className="text-left p-3">Distributor</th>
+                  <th className="text-right p-3">Total</th>
+                  <th className="text-left p-3">Payment</th>
+                  <th className="text-left p-3">Status</th>
+                  <th className="text-left p-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((o) => {
+                  const canDispatch = o.payment.verified && o.orderStatus !== "DISPATCHED";
+                  return (
+                    <tr key={o.id} className="border-t">
+                      <td className="p-3">
+                        <div className="font-medium">{o.orderNo}</div>
+                        <div className="text-xs text-gray-600">Paid on: {onlyDate(o.payment.paidAt)}</div>
+                      </td>
+                      <td className="p-3">{o.distributorName}</td>
+                      <td className="p-3 text-right">₹{fmtINR(o.totalAmount)}</td>
+                      <td className="p-3">
+                        <div className="font-medium">{o.payment.status}</div>
+                        <div className="text-xs text-gray-600">
+                          Paid: ₹{fmtINR(o.payment.paidAmount)} • Mode: {o.payment.mode || "-"}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          Verified: {o.payment.verified ? "Yes" : "No"}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <span className="inline-flex px-2 py-1 rounded-full text-xs bg-gray-100">
+                          {o.orderStatus}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex gap-2 flex-wrap">
+                          <button
+                            className="px-3 py-2 rounded-lg bg-white border text-sm hover:bg-gray-50"
+                            onClick={() => openPayment(o)}
+                          >
+                            View / Verify Payment
+                          </button>
+
+                          <button
+                            className={`px-3 py-2 rounded-lg text-sm ${canDispatch ? "bg-black text-white" : "bg-gray-200 text-gray-500 cursor-not-allowed"}`}
+                            onClick={() => canDispatch && openDispatch(o)}
+                            disabled={!canDispatch}
+                          >
+                            Dispatch
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {rows.length === 0 && (
+                  <tr>
+                    <td className="p-6 text-center text-gray-600" colSpan={6}>
+                      No orders found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {payOpen && selected && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+            <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl border overflow-hidden">
+              <div className="p-4 border-b flex items-center justify-between">
+                <div className="font-semibold">Payment Detail • {selected.orderNo}</div>
+                <button className="text-sm px-2" onClick={() => setPayOpen(false)}>✕</button>
+              </div>
+
+              <div className="p-4 space-y-2 text-sm">
+                <div className="flex justify-between"><span>Total</span><b>₹{fmtINR(selected.totalAmount)}</b></div>
+                <div className="flex justify-between"><span>Paid</span><b>₹{fmtINR(selected.payment.paidAmount)}</b></div>
+                <div className="flex justify-between"><span>Status</span><b>{selected.payment.status}</b></div>
+                <div className="flex justify-between"><span>Mode</span><b>{selected.payment.mode || "-"}</b></div>
+                <div className="flex justify-between"><span>Txn/UTR</span><b>{selected.payment.refNo || "-"}</b></div>
+                <div className="flex justify-between"><span>Paid Date</span><b>{onlyDate(selected.payment.paidAt)}</b></div>
+                <div className="flex justify-between"><span>Entered By</span><b>{selected.payment.enteredByName || "-"}</b></div>
+
+                <div className="mt-3 p-3 rounded-xl bg-gray-50 border">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={payChecked}
+                      onChange={(e) => setPayChecked(e.target.checked)}
+                      disabled={selected.payment.verified || selected.payment.status !== "PAID"}
+                    />
+                    <span className="text-sm">
+                      Payment verified by Warehouse Manager
+                      {selected.payment.verified ? ` (Already verified on ${onlyDate(selected.payment.verifiedAt)})` : ""}
+                    </span>
+                  </label>
+                  {selected.payment.status !== "PAID" && (
+                    <div className="text-xs text-red-600 mt-1">Verify only allowed when PaymentStatus = PAID</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 border-t flex gap-2 justify-end">
+                <button className="px-3 py-2 rounded-lg bg-white border" onClick={() => setPayOpen(false)}>Close</button>
+                <button
+                  className={`px-3 py-2 rounded-lg ${selected.payment.status === "PAID" && !selected.payment.verified ? "bg-black text-white" : "bg-gray-200 text-gray-500 cursor-not-allowed"}`}
+                  onClick={verifyPayment}
+                  disabled={selected.payment.status !== "PAID" || selected.payment.verified || loading}
+                >
+                  Confirm Verify
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {dispatchOpen && selected && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+            <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl border overflow-hidden">
+              <div className="p-4 border-b flex items-center justify-between">
+                <div className="font-semibold">Dispatch • {selected.orderNo}</div>
+                <button className="text-sm px-2" onClick={() => setDispatchOpen(false)}>✕</button>
+              </div>
+
+              <div className="p-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-600">Transport Type</label>
+                    <select className="w-full mt-1 border rounded-lg p-2" value={transportType} onChange={(e) => setTransportType(e.target.value as any)}>
+                      <option value="TRANSPORT">Transport</option>
+                      <option value="COURIER">Courier</option>
+                      <option value="SELF">Self / Handover</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Carrier Name</label>
+                    <input className="w-full mt-1 border rounded-lg p-2" value={carrierName} onChange={(e) => setCarrierName(e.target.value)} placeholder="VRL / DTDC" disabled={transportType === "SELF"} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Tracking / LR / AWB</label>
+                    <input className="w-full mt-1 border rounded-lg p-2" value={trackingNo} onChange={(e) => setTrackingNo(e.target.value)} placeholder="LR123 / AWB999" disabled={transportType === "SELF"} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Vehicle No (optional)</label>
+                    <input className="w-full mt-1 border rounded-lg p-2" value={vehicleNo} onChange={(e) => setVehicleNo(e.target.value)} placeholder="RJ13AB1234" disabled={transportType !== "TRANSPORT"} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Driver Phone (optional)</label>
+                    <input className="w-full mt-1 border rounded-lg p-2" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} placeholder="10 digit" disabled={transportType !== "TRANSPORT"} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Remarks</label>
+                    <input className="w-full mt-1 border rounded-lg p-2" value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Any note" />
+                  </div>
+                </div>
+
+                <div className="mt-4 p-3 rounded-xl bg-gray-50 border">
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium text-sm">Batch / MFG / EXP</div>
+                    <button onClick={addBatchRow} className="px-3 py-2 rounded-lg bg-white border text-sm hover:bg-gray-50">+ Add Batch Row</button>
+                  </div>
+
+                  <div className="mt-3 overflow-auto">
+                    <table className="min-w-[820px] w-full text-sm">
+                      <thead className="text-xs text-gray-700">
+                        <tr>
+                          <th className="text-left py-2">Qty</th>
+                          <th className="text-left py-2">Batch No</th>
+                          <th className="text-left py-2">MFG</th>
+                          <th className="text-left py-2">EXP</th>
+                          <th className="text-left py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batchRows.map((r) => (
+                          <tr key={r.rowId} className="border-t">
+                            <td className="py-2 pr-2">
+                              <input className="w-24 border rounded-lg p-2" value={r.qty} onChange={(e) => updateBatchRow(r.rowId, { qty: e.target.value })} placeholder="30" />
+                            </td>
+                            <td className="py-2 pr-2">
+                              <input className="w-full border rounded-lg p-2" value={r.batchNo} onChange={(e) => updateBatchRow(r.rowId, { batchNo: e.target.value })} placeholder="FW0126A" />
+                            </td>
+                            <td className="py-2 pr-2">
+                              <input type="date" className="border rounded-lg p-2" value={r.mfg} onChange={(e) => updateBatchRow(r.rowId, { mfg: e.target.value })} />
+                            </td>
+                            <td className="py-2 pr-2">
+                              <input type="date" className="border rounded-lg p-2" value={r.exp} onChange={(e) => updateBatchRow(r.rowId, { exp: e.target.value })} />
+                            </td>
+                            <td className="py-2">
+                              <button className="text-sm px-2" onClick={() => removeBatchRow(r.rowId)}>Remove</button>
+                            </td>
+                          </tr>
+                        ))}
+                        {batchRows.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="py-3 text-center text-gray-600">
+                              Add batch rows to continue.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="text-xs text-gray-600 mt-2">
+                    Multi-item orders ke liye next update me per-product batch rows add kar denge.
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-4 border-t flex gap-2 justify-end">
+                <button className="px-3 py-2 rounded-lg bg-white border" onClick={() => setDispatchOpen(false)}>Close</button>
+                <button className="px-3 py-2 rounded-lg bg-black text-white disabled:bg-gray-200 disabled:text-gray-500" onClick={confirmDispatch} disabled={loading || !selected.payment.verified}>
+                  Confirm Dispatch
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,440 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DistributorStatus {
+  PENDING
+  ACTIVE
+}
+
+enum RetailerStatus {
+  PENDING
+  ACTIVE
+}
+
+enum OrderStatus {
+  SUBMITTED
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  DISPATCHED
+  DELIVERED
+}
+
+enum Role {
+  ADMIN
+  HR
+  STATE_BUSINESS_HEAD
+  SALES_MANAGER
+  WAREHOUSE_MANAGER
+  DISTRIBUTOR
+  FIELD_OFFICER
+  RETAILER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum InvoiceType {
+  DISTRIBUTOR
+  RETAILER
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  BANK_TRANSFER
+  CHEQUE
+}
+
+enum ShippingMode {
+  COURIER
+  TRANSPORT
+}
+
+model User {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  name          String
+  phone         String     @unique
+  passwordHash  String
+  role          Role
+  status        UserStatus @default(ACTIVE)
+  address       String?
+  city          String?
+  state         String?
+  pincode       String?
+  distributorId String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  Distributor_Distributor_userIdToUser Distributor? @relation("Distributor_userIdToUser")
+  Retailer                             Retailer?
+  distributor                          Distributor? @relation("DistributorStaff", fields: [distributorId], references: [id])
+
+  managedDistributors Distributor[]    @relation("SalesManagerDistributors")
+  InboundOrder        InboundOrder[]
+  InboundReceive      InboundReceive[]
+
+  @@index([distributorId])
+  @@index([role])
+}
+
+model Distributor {
+  id        String            @id @default(cuid())
+  code      String            @unique
+  name      String
+  phone     String            @unique
+  gst       String?
+  address   String?
+  city      String
+  state     String
+  pincode   String?
+  status    DistributorStatus @default(PENDING)
+  userId    String?           @unique
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  User_Distributor_userIdToUser User?      @relation("Distributor_userIdToUser", fields: [userId], references: [id])
+  Order                         Order[]
+  retailers                     Retailer[]
+  staffUsers                    User[]     @relation("DistributorStaff")
+
+  salesManagerId String?
+  salesManager   User?   @relation("SalesManagerDistributors", fields: [salesManagerId], references: [id], onDelete: SetNull)
+
+  InboundOrder   InboundOrder[]
+  InboundReceive InboundReceive[]
+
+  retailerLedger RetailerLedger[]
+  Invoice        Invoice[]
+
+  @@index([status])
+  @@index([salesManagerId])
+}
+
+model Retailer {
+  id                       String         @id @default(cuid())
+  userId                   String         @unique
+  name                     String
+  phone                    String?        @unique
+  gst                      String?
+  address                  String?
+  city                     String?
+  state                    String?
+  pincode                  String?
+  status                   RetailerStatus @default(PENDING)
+  distributorId            String?
+  createdByRole            Role
+  createdById              String
+  activatedByDistributorId String?
+  activatedAt              DateTime?
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+
+  Order       Order[]
+  distributor Distributor? @relation(fields: [distributorId], references: [id])
+  User        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  ledgerEntries RetailerLedger[]
+  Invoice       Invoice[]
+
+  @@index([distributorId])
+  @@index([status])
+}
+
+model Order {
+  id            String      @id
+  orderNo       String      @unique
+  distributorId String
+  retailerId    String
+  status        OrderStatus @default(SUBMITTED)
+  totalAmount   Float       @default(0)
+  paidAmount    Float       @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime
+
+  Distributor Distributor @relation(fields: [distributorId], references: [id])
+  Retailer    Retailer    @relation(fields: [retailerId], references: [id])
+  OrderItem   OrderItem[]
+
+  Invoice Invoice?
+}
+
+model OrderItem {
+  id          String @id
+  orderId     String
+  productName String
+  qty         Int
+  rate        Float
+  amount      Float
+
+  Order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model Inventory {
+  id            String   @id @default(cuid())
+  distributorId String
+  productName   String
+  qty           Int      @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([distributorId, productName])
+  @@index([distributorId])
+}
+
+model Invoice {
+  id          String      @id @default(cuid())
+  invoiceNo   String      @unique
+  invoiceType InvoiceType @default(RETAILER)
+
+  distributorId String
+  retailerId    String?
+  orderId       String? @unique
+
+  totalAmount Float @default(0)
+
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMode   PaymentMode?
+  paidAmount    Float         @default(0)
+  utrNo         String?
+  paidAt        DateTime?
+  remarks       String?
+
+  createdAt DateTime @default(now())
+
+  Distributor Distributor @relation(fields: [distributorId], references: [id])
+  Retailer    Retailer?   @relation(fields: [retailerId], references: [id])
+  Order       Order?      @relation(fields: [orderId], references: [id])
+
+  items InvoiceItem[]
+
+  @@index([distributorId])
+  @@index([retailerId])
+  @@index([invoiceType])
+}
+
+model InvoiceItem {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  productName String
+  qty         Int
+  rate        Float
+  amount      Float
+  batchNo     String
+  expiryDate  DateTime
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+model InventoryBatch {
+  id            String   @id @default(cuid())
+  distributorId String
+  productName   String
+  batchNo       String
+  expiryDate    DateTime
+  qty           Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([distributorId, productName, batchNo])
+  @@index([distributorId])
+  @@index([expiryDate])
+}
+
+model RetailerStockBatch {
+  id          String   @id @default(cuid())
+  retailerId  String
+  productName String
+  batchNo     String
+  expiryDate  DateTime
+  qty         Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([retailerId, productName, batchNo])
+  @@index([retailerId])
+  @@index([expiryDate])
+}
+
+enum LedgerType {
+  DEBIT
+  CREDIT
+}
+
+model RetailerLedger {
+  id String @id @default(cuid())
+
+  retailerId    String
+  distributorId String
+
+  date   DateTime   @default(now())
+  type   LedgerType
+  amount Float
+
+  reference String?
+  narration String?
+
+  createdAt DateTime @default(now())
+
+  retailer    Retailer    @relation(fields: [retailerId], references: [id], onDelete: Cascade)
+  distributor Distributor @relation(fields: [distributorId], references: [id], onDelete: Cascade)
+
+  @@index([distributorId, date])
+  @@index([retailerId, date])
+  @@index([type])
+}
+
+enum OwnerType {
+  COMPANY
+  DISTRIBUTOR
+  RETAILER
+}
+
+enum InboundOrderStatus {
+  CREATED
+  CONFIRMED
+  PACKED
+  DISPATCHED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum ReceiveStatus {
+  RECEIVED
+  PARTIAL_RECEIVED
+}
+
+model InboundOrder {
+  id               String             @id @default(cuid())
+  orderNo          String             @unique
+  forDistributorId String
+  createdByUserId  String
+  status           InboundOrderStatus @default(CREATED)
+  expectedAt       DateTime?
+  trackingCarrier  String?
+  trackingNo       String?
+  trackingUrl      String?
+
+  shippingMode  ShippingMode?
+  courierName   String?
+  transportName String?
+  lrNo          String?
+  dispatchDate  DateTime?
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  distributor Distributor        @relation(fields: [forDistributorId], references: [id])
+  createdBy   User               @relation(fields: [createdByUserId], references: [id])
+  items       InboundOrderItem[]
+  receives    InboundReceive[]
+
+  @@index([forDistributorId, status, createdAt])
+}
+
+model InboundOrderItem {
+  id             String @id @default(cuid())
+  inboundOrderId String
+
+  productName   String
+  orderedQtyPcs Int
+
+  rate       Float?
+  batchNo    String?
+  mfgDate    DateTime?
+  expiryDate DateTime?
+
+  inboundOrder InboundOrder @relation(fields: [inboundOrderId], references: [id], onDelete: Cascade)
+
+  @@index([inboundOrderId])
+  @@index([productName])
+}
+
+model InboundReceive {
+  id               String        @id @default(cuid())
+  inboundOrderId   String
+  distributorId    String
+  status           ReceiveStatus
+  receivedAt       DateTime      @default(now())
+  receivedByUserId String
+
+  inboundOrder InboundOrder         @relation(fields: [inboundOrderId], references: [id], onDelete: Cascade)
+  distributor  Distributor          @relation(fields: [distributorId], references: [id])
+  receivedBy   User                 @relation(fields: [receivedByUserId], references: [id])
+  items        InboundReceiveItem[]
+
+  @@index([distributorId, receivedAt])
+  @@index([inboundOrderId])
+}
+
+model InboundReceiveItem {
+  id               String @id @default(cuid())
+  inboundReceiveId String
+
+  productName String
+
+  orderedQtyPcs  Int
+  receivedQtyPcs Int
+  shortQtyPcs    Int
+
+  inboundReceive InboundReceive @relation(fields: [inboundReceiveId], references: [id], onDelete: Cascade)
+
+  @@unique([inboundReceiveId, productName])
+  @@index([inboundReceiveId])
+  @@index([productName])
+}
+
+model ProductCatalog {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  barcode   String? @unique
+  hsn       String?
+  mrp       Float?
+  salePrice Float?
+  gstRate   Float?
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@index([name])
+}
+
+model StockLot {
+  id String @id @default(cuid())
+
+  productName String
+  mfgDate     DateTime?
+
+  ownerType    OwnerType
+  ownerId      String?
+  batchNo      String?
+  expDate      DateTime?
+  qtyOnHandPcs Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([ownerType, ownerId, productName])
+  @@index([expDate])
+}
