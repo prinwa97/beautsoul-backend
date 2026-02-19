@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function jsonError(msg: string, status = 400) {
   return NextResponse.json({ ok: false, error: msg }, { status });
@@ -34,7 +35,15 @@ export async function GET() {
         updatedAt: true,
       },
     });
-    return NextResponse.json({ ok: true, products });
+    return NextResponse.json(
+  { ok: true, products },
+  {
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  }
+);
+
   } catch (e) {
     return jsonError("Failed to load products", 500);
   }
