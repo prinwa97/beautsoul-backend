@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { PHASE_PRODUCTION_BUILD } from "next/constants";
+
 
 // NOTE: abhi simple rakh rahe hain (admin check later).
 // Agar tumhare paas admin auth helper hai to yahan requireAdmin() laga dena.
+const isBuild = process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
