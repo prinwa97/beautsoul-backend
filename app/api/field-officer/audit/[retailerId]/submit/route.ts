@@ -24,6 +24,14 @@ function safeISODate(v: any) {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
+type CleanAuditItem = {
+  productName: string;
+  batchNo: string;
+  expiryDate: Date | null;
+  systemQty: number;
+  physicalQty: number | null;
+};
+
 /* -------------------- handler -------------------- */
 export async function POST(req: Request, ctx: { params: Promise<{ retailerId: string }> }) {
   try {
@@ -47,12 +55,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
 
     // 3) body
     const body: any = await req.json().catch(() => null);
-    const itemsIn = Array.isArray(body?.items) ? body.items : null;
-    if (!itemsIn?.length) return NextResponse.json({ ok: false, error: "items required" }, { status: 400 });
+    const itemsIn: any[] = Array.isArray(body?.items) ? body.items : [];
+    if (!itemsIn.length) return NextResponse.json({ ok: false, error: "items required" }, { status: 400 });
 
     // 4) normalize + validate (batch-wise)
-    const clean = itemsIn
-      .map((it: any) => {
+    const clean: CleanAuditItem[] = itemsIn
+      .map((it): CleanAuditItem => {
         const productName = cleanStr(it?.productName);
         const batchNo = cleanStr(it?.batchNo) || "NA"; // keep string, never null
         const expiryDate = safeISODate(it?.expiryDate); // Date | null
@@ -64,7 +72,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
 
         return { productName, batchNo, expiryDate, systemQty, physicalQty };
       })
-      .filter((x) => x.productName);
+      .filter((x): x is CleanAuditItem => Boolean(x.productName));
 
     if (!clean.length) return NextResponse.json({ ok: false, error: "No valid items" }, { status: 400 });
 
@@ -98,7 +106,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
               batchNo: x.batchNo || "NA", // store string (NA), don't null
               expiryDate: x.expiryDate,
               systemQty: x.systemQty,
-              physicalQty: x.physicalQty!,
+              physicalQty: x.physicalQty!, // validated above
               variance: x.physicalQty! - x.systemQty,
             })),
           },
