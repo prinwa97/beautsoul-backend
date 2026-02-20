@@ -272,7 +272,7 @@ export default function CreateUserForm({
             <label className="text-xs font-semibold text-gray-700">{role === "DISTRIBUTOR" ? "GSTIN" : "GST (optional)"}</label>
             <input
               value={f.gstinOrGst}
-              onChange={(e) => setField("gstinOrGst", e.target.value)}
+              onChange={(e) => setField("gstinOrGst", e.target.value.toUpperCase())}
               placeholder={role === "DISTRIBUTOR" ? "GSTIN (required)" : "GSTIN (optional)"}
               className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
               disabled={submitting}
