@@ -83,7 +83,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ orderId: strin
 
     // ✅ validate allocations match order qty per product
     const needByProduct = new Map<string, number>();
-    for (const it of order.items) {
+    for (const it of (order as any).items || []) {
       const pn = String(it.productName || "").trim();
       needByProduct.set(pn, Math.max(0, asInt((it as any).orderedQtyPcs)));
     }
@@ -116,140 +116,137 @@ export async function POST(req: Request, ctx: { params: Promise<{ orderId: strin
       const prev = grouped.get(key);
       if (prev) {
         prev.qty += qty;
-        // keep last rate (optional)
         prev.rate = rate;
       } else {
         grouped.set(key, { productName, stockLotId, qty, rate });
       }
     }
 
-    await prisma.$transaction(async (tx) => {
-      const stockLotIds = Array.from(new Set(Array.from(grouped.values()).map((g) => g.stockLotId)));
+    // ✅ FIX: increase interactive transaction timeout + speed up DB operations
+    await prisma.$transaction(
+      async (tx) => {
+        const stockLotIds = Array.from(new Set(Array.from(grouped.values()).map((g) => g.stockLotId)));
 
-      const lots = await tx.stockLot.findMany({
-        where: {
-          id: { in: stockLotIds },
-          ownerType: "COMPANY",
-          ownerId: null,
-        },
-        select: {
-          id: true,
-          productName: true,
-          batchNo: true,
-          mfgDate: true,
-          expDate: true,
-          qtyOnHandPcs: true,
-        },
-      });
-
-      const lotById = new Map<string, (typeof lots)[number]>();
-      for (const l of lots) lotById.set(String(l.id), l);
-
-      const missingLots = stockLotIds.filter((id) => !lotById.has(String(id)));
-      if (missingLots.length) throw new Error(`StockLot not found: ${missingLots.join(", ")}`);
-
-      // overuse check per stockLot
-      const usedByLot = new Map<string, number>();
-      for (const g of grouped.values()) {
-        usedByLot.set(g.stockLotId, (usedByLot.get(g.stockLotId) || 0) + g.qty);
-      }
-
-      for (const [lotId, used] of usedByLot.entries()) {
-        const l = lotById.get(lotId)!;
-        const avail = Math.max(0, asInt(l.qtyOnHandPcs));
-        if (used > avail) throw new Error(`StockLot ${l.batchNo || lotId} overused: ${used} > ${avail}`);
-      }
-
-      // decrement company stock lots
-      for (const [lotId, used] of usedByLot.entries()) {
-        await tx.stockLot.update({
-          where: { id: lotId },
-          data: { qtyOnHandPcs: { decrement: used } },
-        });
-      }
-
-      // ✅ create/update distributor InventoryBatch + Inventory aggregate (FIXED)
-      for (const g of grouped.values()) {
-        const l = lotById.get(g.stockLotId)!;
-
-        const productName = String(g.productName || "").trim();
-        const batchNo = String(l.batchNo || "").trim(); // StockLot.batchNo is optional in schema
-        const expiryDate = l.expDate ? new Date(l.expDate) : null;
-
-        // IMPORTANT: InventoryBatch.batchNo required + unique uses it -> empty will collide
-        if (!batchNo) {
-          throw new Error(`StockLot ${l.id} has missing batchNo for product "${productName}". BatchNo required.`);
-        }
-        // IMPORTANT: InventoryBatch.expiryDate required in schema
-        if (!expiryDate || Number.isNaN(expiryDate.getTime())) {
-          throw new Error(`StockLot ${l.id} has missing/invalid expDate for batch "${batchNo}". expDate required.`);
-        }
-
-        const mfgDate = l.mfgDate ? new Date(l.mfgDate) : null;
-        if (mfgDate && Number.isNaN(mfgDate.getTime())) {
-          throw new Error(`StockLot ${l.id} has invalid mfgDate`);
-        }
-
-        // guard: same unique batch should not have different expiry
-        const existing = await tx.inventoryBatch.findUnique({
+        const lots = await tx.stockLot.findMany({
           where: {
-            distributorId_productName_batchNo: {
-              distributorId,
-              productName,
-              batchNo,
-            },
+            id: { in: stockLotIds },
+            ownerType: "COMPANY",
+            ownerId: null,
           },
-          select: { id: true, expiryDate: true },
+          select: {
+            id: true,
+            productName: true,
+            batchNo: true,
+            mfgDate: true,
+            expDate: true,
+            qtyOnHandPcs: true,
+          },
         });
 
-        if (existing && existing.expiryDate.getTime() !== expiryDate.getTime()) {
-          throw new Error(
-            `ExpiryDate mismatch for distributor batch: ${productName}/${batchNo}. Existing=${existing.expiryDate.toISOString()} Incoming=${expiryDate.toISOString()}`
-          );
+        const lotById = new Map<string, (typeof lots)[number]>();
+        for (const l of lots) lotById.set(String(l.id), l);
+
+        const missingLots = stockLotIds.filter((id) => !lotById.has(String(id)));
+        if (missingLots.length) throw new Error(`StockLot not found: ${missingLots.join(", ")}`);
+
+        // overuse check per stockLot
+        const usedByLot = new Map<string, number>();
+        for (const g of grouped.values()) {
+          usedByLot.set(g.stockLotId, (usedByLot.get(g.stockLotId) || 0) + g.qty);
         }
 
-        // ✅ FIX: upsert instead of create (avoids P2002)
-        await tx.inventoryBatch.upsert({
-          where: {
-            distributorId_productName_batchNo: {
-              distributorId,
-              productName,
-              batchNo,
-            },
-          },
-          create: {
-            distributorId,
-            productName,
-            batchNo,
-            mfgDate,
-            expiryDate,
-            qty: g.qty,
-          },
-          update: {
-            qty: { increment: g.qty },
-            // keep dates consistent; set only if you want to refresh
-            mfgDate: mfgDate ?? undefined,
-            expiryDate: expiryDate ?? undefined,
-          },
-        });
+        for (const [lotId, used] of usedByLot.entries()) {
+          const l = lotById.get(lotId)!;
+          const avail = Math.max(0, asInt((l as any).qtyOnHandPcs));
+          if (used > avail) throw new Error(`StockLot ${l.batchNo || lotId} overused: ${used} > ${avail}`);
+        }
 
-        // ✅ FIX: Inventory aggregate: upsert (no updateMany + create)
-        await tx.inventory.upsert({
-          where: { distributorId_productName: { distributorId, productName } },
-          create: { distributorId, productName, qty: g.qty },
-          update: { qty: { increment: g.qty } },
-        });
-      }
+        // ✅ faster: decrement company stock lots in parallel
+        await Promise.all(
+          Array.from(usedByLot.entries()).map(([lotId, used]) =>
+            tx.stockLot.update({
+              where: { id: lotId },
+              data: { qtyOnHandPcs: { decrement: used } },
+            })
+          )
+        );
 
-      // ✅ mark order packed
-      await tx.inboundOrder.update({
-        where: { id: orderId },
-        data: {
-          status: "PACKED" as any,
-          // packedAt / packedByUserId only add if fields exist in schema
-        },
-      });
-    });
+        // ✅ faster: upserts in parallel
+        await Promise.all(
+          Array.from(grouped.values()).map(async (g) => {
+            const l = lotById.get(g.stockLotId)!;
+
+            const productName = String(g.productName || "").trim();
+            const batchNo = String((l as any).batchNo || "").trim(); // may be optional in schema
+            const expiryDate = (l as any).expDate ? new Date((l as any).expDate) : null;
+
+            if (!batchNo) {
+              throw new Error(`StockLot ${(l as any).id} has missing batchNo for product "${productName}". BatchNo required.`);
+            }
+            if (!expiryDate || Number.isNaN(expiryDate.getTime())) {
+              throw new Error(`StockLot ${(l as any).id} has missing/invalid expDate for batch "${batchNo}". expDate required.`);
+            }
+
+            const mfgDate = (l as any).mfgDate ? new Date((l as any).mfgDate) : null;
+            if (mfgDate && Number.isNaN(mfgDate.getTime())) {
+              throw new Error(`StockLot ${(l as any).id} has invalid mfgDate`);
+            }
+
+            // guard: same unique batch should not have different expiry
+            const existing = await tx.inventoryBatch.findUnique({
+              where: {
+                distributorId_productName_batchNo: {
+                  distributorId,
+                  productName,
+                  batchNo,
+                },
+              },
+              select: { id: true, expiryDate: true },
+            });
+
+            if (existing && existing.expiryDate.getTime() !== expiryDate.getTime()) {
+              throw new Error(
+                `ExpiryDate mismatch for distributor batch: ${productName}/${batchNo}. Existing=${existing.expiryDate.toISOString()} Incoming=${expiryDate.toISOString()}`
+              );
+            }
+
+            await tx.inventoryBatch.upsert({
+              where: {
+                distributorId_productName_batchNo: {
+                  distributorId,
+                  productName,
+                  batchNo,
+                },
+              },
+              create: {
+                distributorId,
+                productName,
+                batchNo,
+                mfgDate,
+                expiryDate,
+                qty: g.qty,
+              },
+              update: {
+                qty: { increment: g.qty },
+              },
+            });
+
+            await tx.inventory.upsert({
+              where: { distributorId_productName: { distributorId, productName } },
+              create: { distributorId, productName, qty: g.qty },
+              update: { qty: { increment: g.qty } },
+            });
+          })
+        );
+
+        // ✅ mark order packed
+        await tx.inboundOrder.update({
+          where: { id: orderId },
+          data: { status: "PACKED" as any },
+        });
+      },
+      { timeout: 20000, maxWait: 20000 }
+    );
 
     return NextResponse.json({ ok: true });
   } catch (e: any) {
