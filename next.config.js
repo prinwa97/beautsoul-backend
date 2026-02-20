@@ -1,17 +1,20 @@
-// next.config.js
-const isProd = process.env.NODE_ENV === "production";
+// beautsoul-backend/next.config.js
 
-const withPWA = require("next-pwa")({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-  disable: !isProd,
-  scope: "/",
-});
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  // ✅ Fix: silence turbopack migration warning (keeps compatibility)
+  turbopack: {},
 
-module.exports = withPWA({
+  // ✅ Recommended for stable builds on Vercel
   reactStrictMode: true,
 
-  // ✅ silence workspace root warning + correct tracing root
-  outputFileTracingRoot: require("path").join(__dirname, ".."),
-});
+  // ✅ If you previously had experimental.esmExternals, REMOVE it (causes issues in Next 16)
+  // experimental: { esmExternals: true }, // ❌ don't use
+
+  // ✅ Keep webpack hook (in case plugins/addons rely on it)
+  webpack: (config) => {
+    return config;
+  },
+};
+
+module.exports = nextConfig;
