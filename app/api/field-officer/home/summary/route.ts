@@ -54,7 +54,7 @@ export async function GET() {
 
     const targetsEnabled = process.env.FO_TARGETS_ENABLED === "1";
     if (targetsEnabled && foUserId) {
-      // NOTE: enable only after DB migration creates SalesTarget table
+      // enable only after DB migration creates SalesTarget table
       const targetRow = await prisma.salesTarget.findUnique({
         where: { month_fieldOfficerId: { month: monthKey, fieldOfficerId: foUserId } },
         select: { targetAmount: true },
@@ -62,18 +62,24 @@ export async function GET() {
       targetAmount = Number(targetRow?.targetAmount || 0);
     }
 
-    /* ---------------- ACHIEVED ---------------- */
+    /* ---------------- ACHIEVED ----------------
+       ✅ Fix: Count all "active" order statuses (not only DELIVERED)
+       so Achieved will show even if dispatch/delivered not done yet.
+    */
     let achievedAmount = 0;
     if (retailerIds.length) {
       const agg: any = await prisma.order.aggregate({
         where: {
           distributorId,
           retailerId: { in: retailerIds },
-          status: "DELIVERED" as any,
           createdAt: { gte: monthStart, lte: now },
+          status: {
+            in: ["SUBMITTED", "CONFIRMED", "DISPATCHED", "DELIVERED"] as any,
+          },
         } as any,
         _sum: { totalAmount: true },
       });
+
       achievedAmount = Number(agg?._sum?.totalAmount || 0);
     }
 

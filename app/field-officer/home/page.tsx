@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type SummaryResp = {
   ok: boolean;
@@ -47,12 +48,19 @@ function clamp(v: number, a: number, b: number) {
 function getErrMessage(x: unknown) {
   if (!x) return "";
   if (typeof x === "string") return x;
-  if (typeof x === "object" && "error" in x) return String((x as any).error || "");
-  if (typeof x === "object" && "message" in x) return String((x as any).message || "");
+  if (typeof x === "object" && x && "error" in x) return String((x as any).error || "");
+  if (typeof x === "object" && x && "message" in x) return String((x as any).message || "");
   return "";
 }
 
+function retailerHref(retailerId: string) {
+  // ✅ based on your existing page pattern
+  return `/field-officer/orders/history?retailerId=${encodeURIComponent(retailerId)}`;
+}
+
 export default function FieldOfficerHomePage() {
+  const router = useRouter();
+
   const [data, setData] = useState<SummaryResp | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -68,10 +76,9 @@ export default function FieldOfficerHomePage() {
           credentials: "include",
         });
 
-        // ✅ Proper typing: do NOT let TS infer `never`
         const json: SummaryResp | null = await res
           .json()
-          .then((x) => (x as SummaryResp))
+          .then((x) => x as SummaryResp)
           .catch(() => null);
 
         if (!alive) return;
@@ -106,10 +113,12 @@ export default function FieldOfficerHomePage() {
     return clamp((achievedAmount / targetAmount) * 100, 0, 100);
   }, [targetAmount, achievedAmount]);
 
+  const goRetailer = (retailerId: string) => {
+    router.push(retailerHref(retailerId));
+  };
+
   return (
     <div className="max-w-2xl mx-auto px-3 md:px-1 pb-10">
-      
-
       {/* status */}
       <div className="mt-4">
         {loading ? (
@@ -119,9 +128,7 @@ export default function FieldOfficerHomePage() {
         ) : data?.ok ? null : (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
             <div className="text-sm font-semibold text-red-800">Summary error</div>
-            <div className="mt-1 text-sm text-red-700">
-              {data?.error || "Unknown error"}
-            </div>
+            <div className="mt-1 text-sm text-red-700">{data?.error || "Unknown error"}</div>
           </div>
         )}
       </div>
@@ -194,9 +201,17 @@ export default function FieldOfficerHomePage() {
                 </thead>
                 <tbody>
                   {(data.ordersTop10 || []).length ? (
-                    (data.ordersTop10 || []).map((r) => (
-                      <tr key={r.retailerId} className="border-t">
-                        <td className="px-3 py-2 font-semibold text-gray-900">{r.name}</td>
+                    (data.ordersTop10 || []).map((r, idx) => (
+                      <tr
+                        key={r.retailerId}
+                        className="border-t hover:bg-gray-50 cursor-pointer"
+                        onClick={() => goRetailer(r.retailerId)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                       <td className="px-3 py-2 font-semibold text-gray-900">
+                        {r.name}
+                      </td>
                         <td className="px-3 py-2 text-gray-700">{r.city || "—"}</td>
                         <td className="px-3 py-2 text-right font-bold text-gray-900">
                           {r.noOrderDays >= 99999 ? "—" : r.noOrderDays}
@@ -243,9 +258,17 @@ export default function FieldOfficerHomePage() {
                 </thead>
                 <tbody>
                   {(data.paymentsTop10 || []).length ? (
-                    (data.paymentsTop10 || []).map((r) => (
-                      <tr key={r.retailerId} className="border-t">
-                        <td className="px-3 py-2 font-semibold text-gray-900">{r.name}</td>
+                    (data.paymentsTop10 || []).map((r, idx) => (
+                      <tr
+                        key={r.retailerId}
+                        className="border-t hover:bg-gray-50 cursor-pointer"
+                        onClick={() => goRetailer(r.retailerId)}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <td className="px-3 py-2 font-semibold text-gray-900">
+                          {r.name}
+                        </td>
                         <td className="px-3 py-2 text-gray-700">{r.city || "—"}</td>
                         <td className="px-3 py-2 text-right font-bold text-gray-900">
                           ₹{fmtINR(n(r.pendingAmount))}

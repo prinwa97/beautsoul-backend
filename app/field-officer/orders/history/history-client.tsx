@@ -232,10 +232,12 @@ export default function HistoryClient() {
               onClick={() => openOrder(o)}
               className="w-full rounded-2xl border border-black/10 bg-white p-3 shadow-sm text-left active:scale-[0.99]"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+              {/* ✅ gap fix: no justify-between */}
+              <div className="flex items-start gap-2">
+                {/* LEFT */}
+                <div className="flex-1 min-w-0">
                   <div className="text-sm font-extrabold truncate">{o.orderNo || o.id}</div>
-                  <div className="text-[11px] text-gray-500">{fmt(o.createdAt)}</div>
+                  <div className="text-[11px] text-gray-500 truncate">{fmt(o.createdAt)}</div>
                   <div className="mt-1 text-[11px] text-gray-600">
                     Status:{" "}
                     <span className="font-semibold">
@@ -245,7 +247,8 @@ export default function HistoryClient() {
                   </div>
                 </div>
 
-                <div className="text-right">
+                {/* RIGHT */}
+                <div className="shrink-0 text-right whitespace-nowrap">
                   <div className="text-sm font-extrabold">{inr(o.totalAmount || 0)}</div>
                 </div>
               </div>
@@ -260,7 +263,9 @@ export default function HistoryClient() {
                       <div className="font-semibold">{inr(it.amount || 0)}</div>
                     </div>
                   ))}
-                  {o.items.length > 6 ? <div className="text-[11px] text-gray-500">+{o.items.length - 6} more items</div> : null}
+                  {o.items.length > 6 ? (
+                    <div className="text-[11px] text-gray-500">+{o.items.length - 6} more items</div>
+                  ) : null}
                   <div className="pt-1 text-[11px] text-gray-500">Tap to open</div>
                 </div>
               ) : null}
@@ -320,9 +325,7 @@ export default function HistoryClient() {
                     </div>
 
                     {isEditable(active.status) ? (
-                      <div className="mt-2 text-[11px] text-gray-500">
-                        Qty 0/blank = remove item
-                      </div>
+                      <div className="mt-2 text-[11px] text-gray-500">Qty 0/blank = remove item</div>
                     ) : null}
                   </div>
                 );
