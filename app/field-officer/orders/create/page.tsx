@@ -1,10 +1,10 @@
 import React, { Suspense } from "react";
-import OrdersClient from "./orders-client";
+import CreateOrderClient from "./create-order-client";
 
 export default function Page() {
   return (
     <Suspense fallback={<div className="p-4">Loading…</div>}>
-      <OrdersClient />
+      <CreateOrderClient />
     </Suspense>
   );
 }
