@@ -13,6 +13,15 @@ function clean(s: any) {
   return x.length ? x : "";
 }
 
+function monthKeyOf(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function nextMonthKeyOf(d: Date) {
+  const x = new Date(d);
+  x.setMonth(x.getMonth() + 1);
+  return monthKeyOf(x);
+}
+
 export async function GET(req: Request) {
   const auth = await requireSalesManager();
   if (!auth.ok) return jsonError(auth.error, auth.status);
@@ -21,7 +30,6 @@ export async function GET(req: Request) {
   const q = clean(searchParams.get("q"));
   const distributorId = clean(searchParams.get("distributorId"));
 
-  // ✅ SM can only see distributors assigned to them (unless ADMIN)
   const managedDists = await prisma.distributor.findMany({
     where:
       auth.role === "ADMIN"
@@ -67,20 +75,52 @@ export async function GET(req: Request) {
     take: 500,
   });
 
+  const foIds = fos.map((x) => x.id);
+
   // ✅ assigned retailers count (SOURCE OF TRUTH: RetailerAssignmentActive)
   const counts = await prisma.retailerAssignmentActive.groupBy({
     by: ["foUserId"],
-    where: { foUserId: { in: fos.map((x) => x.id) } },
+    where: { foUserId: { in: foIds } },
     _count: { _all: true },
   });
   const countMap = new Map(counts.map((c) => [c.foUserId, c._count._all]));
 
   const distNameMap = new Map(managedDists.map((d) => [d.id, d.name]));
 
+  // ✅ Targets: this month + next month (so UI can enforce rule and show locked)
+  const thisKey = monthKeyOf(new Date());
+  const nextKey = nextMonthKeyOf(new Date());
+
+  const targets = foIds.length
+    ? await prisma.fieldOfficerTarget.findMany({
+        where: { foUserId: { in: foIds }, monthKey: { in: [thisKey, nextKey] } },
+        select: { foUserId: true, monthKey: true, targetValue: true, locked: true },
+      })
+    : [];
+
+  const thisTargetMap = new Map(
+    targets.filter((t) => t.monthKey === thisKey).map((t) => [t.foUserId, Number(t.targetValue || 0)])
+  );
+  const nextTargetMap = new Map(
+    targets.filter((t) => t.monthKey === nextKey).map((t) => [t.foUserId, Number(t.targetValue || 0)])
+  );
+  const nextLockedMap = new Map(
+    targets.filter((t) => t.monthKey === nextKey).map((t) => [t.foUserId, !!t.locked])
+  );
+
   const fieldOfficers = fos.map((fo) => ({
     ...fo,
     distributorName: fo.distributorId ? distNameMap.get(fo.distributorId) || null : null,
     assignedRetailers: countMap.get(fo.id) || 0,
+
+    // ✅ for TargetCell
+    thisMonthTarget: thisTargetMap.get(fo.id) || 0,
+    nextMonthTarget: nextTargetMap.get(fo.id) || 0,
+    nextMonthLocked: nextLockedMap.get(fo.id) || false,
+
+    // (optional) also return month keys
+    _thisMonthKey: thisKey,
+    _nextMonthKey: nextKey,
   }));
 
   return NextResponse.json({

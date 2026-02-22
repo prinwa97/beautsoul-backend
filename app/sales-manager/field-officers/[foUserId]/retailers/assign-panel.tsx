@@ -116,7 +116,9 @@ export default function AssignPanel({
       const res = await fetch(url, { cache: "no-store" });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) throw new Error(data?.error || "Failed");
-      const rows: RetailerLite[] = Array.isArray(data.retailers) ? data.retailers : [];
+
+      // ✅ FIX: backend returns { ok:true, rows:[...] }
+      const rows: RetailerLite[] = Array.isArray(data.rows) ? data.rows : [];
       setUnassigned(rows);
 
       setSelected((prev) => {
@@ -144,14 +146,16 @@ export default function AssignPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, distributorId]);
 
-  async function doUnassign(retailerId: string) {
+  // ✅ FIX: backend expects mapId, not retailerId
+  async function doUnassign(mapId: string) {
+    if (!mapId) return;
     setLoading(true);
     setToast("");
     try {
       const res = await fetch("/api/sales-manager/field-officers/retailers/unassign", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ retailerId }),
+        body: JSON.stringify({ mapId }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) throw new Error(data?.error || "Unassign failed");
@@ -281,20 +285,14 @@ export default function AssignPanel({
               {assigned.map((row) => {
                 const r = row.retailer;
                 return (
-                  <div
-                    key={row.mapId}
-                    className="rounded-2xl border border-black/10 bg-white p-3 hover:bg-gray-50"
-                  >
-                    {/* ✅ SINGLE ROW PROFESSIONAL */}
+                  <div key={row.mapId} className="rounded-2xl border border-black/10 bg-white p-3 hover:bg-gray-50">
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                      {/* Left: Name + chips */}
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 min-w-0">
                           <div className="truncate text-base font-extrabold">{r?.name || "-"}</div>
                           <Badge text={r?.status || "-"} />
                         </div>
 
-                        {/* chips row */}
                         <div className="mt-1 flex flex-wrap gap-2">
                           <InfoChip>{r?.phone ? `📞 ${r.phone}` : "📞 -"}</InfoChip>
                           <InfoChip>{r?.city ? `📍 ${r.city}` : "📍 -"}</InfoChip>
@@ -303,7 +301,6 @@ export default function AssignPanel({
                         </div>
                       </div>
 
-                      {/* Right: stats + action */}
                       <div className="flex flex-wrap items-center gap-2 md:justify-end">
                         <div className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-black">
                           Due: ₹ {inr(n(row.due))}
@@ -312,7 +309,7 @@ export default function AssignPanel({
                           Inactive: {row.inactiveDays ?? "-"} days
                         </div>
                         <button
-                          onClick={() => doUnassign(row.retailerId)}
+                          onClick={() => doUnassign(row.mapId)}
                           className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:opacity-90"
                         >
                           Unassign

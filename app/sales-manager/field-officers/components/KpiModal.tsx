@@ -53,7 +53,9 @@ function metricToApi(metric: MetricKey) {
   // (abhi) sales/aov/conv orders based reh sakte hain
   if (metric === "SALES" || metric === "AOV" || metric === "CONV") return "ORDERS";
 
-  if (metric === "NEXT_TARGET") return "DISTRIBUTORS";
+  // ✅ (optional) agar backend NEXT_TARGET support karta ho
+  if (metric === "NEXT_TARGET") return "NEXT_TARGET";
+
   return metric;
 }
 
@@ -312,7 +314,13 @@ export default function KpiModal(props: {
   }, [open, apiMetric, foId, period?.from, period?.to]);
 
   const kind: "GROWTH" | "ORDERS" | "COLLECTION" | "OTHER" =
-    apiMetric === "GROWTH" ? "GROWTH" : apiMetric === "ORDERS" ? "ORDERS" : apiMetric === "COLLECTION" ? "COLLECTION" : "OTHER";
+    apiMetric === "GROWTH"
+      ? "GROWTH"
+      : apiMetric === "ORDERS"
+      ? "ORDERS"
+      : apiMetric === "COLLECTION"
+      ? "COLLECTION"
+      : "OTHER";
 
   // -------------------- GROWTH VIEW (special) --------------------
   const growthRows: GrowthRow[] = useMemo(() => {
@@ -409,6 +417,7 @@ export default function KpiModal(props: {
               <button
                 type="button"
                 onClick={() => {
+                  if (!foId) return;
                   onClose();
                   router.push(`/sales-manager/field-officers/${foId}`);
                 }}
@@ -488,7 +497,9 @@ export default function KpiModal(props: {
                               <Trend current={r.aovGrowthPct} previous={prev?.aovGrowthPct ?? null} decimals={0} />
                             </td>
 
-                            <td className="px-3 py-3 font-extrabold">{r.target == null || r.target === 0 ? "—" : `₹${inr(r.target)}`}</td>
+                            <td className="px-3 py-3 font-extrabold">
+                              {r.target == null || r.target === 0 ? "—" : `₹${inr(r.target)}`}
+                            </td>
 
                             <td className="px-3 py-3">
                               {r.achievementPct == null ? (
@@ -548,114 +559,6 @@ export default function KpiModal(props: {
                 <div className="mt-2 text-[11px] text-black/50">
                   Live month is calculated from period's <b>to</b> month (so Feb selection ⇒ Feb live).
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* ✅ Existing consolidated view for ORDERS/COLLECTION */}
-          {!loading && !err && rows.length > 0 && kind !== "GROWTH" && (kind === "ORDERS" || kind === "COLLECTION") && (
-            <div className="mb-4 rounded-2xl border border-black/10 bg-gray-50 p-3">
-              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                <div className="rounded-xl border border-black/10 bg-white p-3">
-                  <div className="text-[11px] font-bold text-black/50">{kind === "COLLECTION" ? "Total Entries" : "Total Orders"}</div>
-                  <div className="text-lg font-extrabold">{summary.totalRows}</div>
-                </div>
-
-                <div className="rounded-xl border border-black/10 bg-white p-3">
-                  <div className="text-[11px] font-bold text-black/50">
-                    {metric === "COLLECTION" ? "Total Collection" : metric === "SALES" ? "Total Sales" : "Total Value"}
-                  </div>
-                  <div className="text-lg font-extrabold">₹{inr(summary.totalAmount)}</div>
-                </div>
-
-                <div className="rounded-xl border border-black/10 bg-white p-3">
-                  <div className="text-[11px] font-bold text-black/50">Retailers</div>
-                  <div className="text-lg font-extrabold">{summary.retailerList.length}</div>
-                </div>
-
-                <div className="rounded-xl border border-black/10 bg-white p-3">
-                  <div className="text-[11px] font-bold text-black/50">Top Retailer</div>
-                  <div className="text-sm font-extrabold">
-                    {summary.retailerList[0] ? `${summary.retailerList[0].name} (${summary.retailerList[0].count})` : "—"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <input
-                  value={retailerQuery}
-                  onChange={(e) => setRetailerQuery(e.target.value)}
-                  placeholder="Filter by retailer name..."
-                  className="w-full md:w-[320px] rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-black/30"
-                />
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const all: Record<string, boolean> = {};
-                      statuses.forEach((s) => (all[s] = true));
-                      setSelectedStatuses(all);
-                    }}
-                    className={`rounded-full border px-3 py-1 text-xs font-extrabold ${pillClass(
-                      statuses.every((s) => selectedStatuses[s])
-                    )}`}
-                  >
-                    All
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedStatuses({})}
-                    className={`rounded-full border px-3 py-1 text-xs font-extrabold ${pillClass(Object.keys(selectedStatuses).length === 0)}`}
-                  >
-                    Clear
-                  </button>
-
-                  {statuses.slice(0, 10).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setSelectedStatuses((prev) => ({ ...prev, [s]: !prev[s] }))}
-                      className={`rounded-full border px-3 py-1 text-xs font-extrabold ${pillClass(!!selectedStatuses[s])}`}
-                      title={`Filter ${s}`}
-                    >
-                      {s} ({summary.statusCount[s] || 0})
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-3 overflow-x-auto rounded-xl border border-black/10 bg-white">
-                <table className="min-w-[760px] w-full text-left">
-                  <thead className="bg-gray-50">
-                    <tr className="text-[12px] font-extrabold text-black/70">
-                      <th className="px-3 py-2">Retailer</th>
-                      <th className="px-3 py-2">{kind === "COLLECTION" ? "Entries" : "Orders"}</th>
-                      <th className="px-3 py-2">{metric === "COLLECTION" ? "Collected" : "Value"}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-black/5">
-                    {summary.retailerList.slice(0, 12).map((x) => (
-                      <tr key={x.name} className="text-sm font-semibold hover:bg-gray-50">
-                        <td className="px-3 py-2 font-extrabold">{x.name}</td>
-                        <td className="px-3 py-2">{x.count}</td>
-                        <td className="px-3 py-2 font-extrabold">₹{inr(x.amount)}</td>
-                      </tr>
-                    ))}
-                    {summary.retailerList.length > 12 && (
-                      <tr>
-                        <td colSpan={3} className="px-3 py-2 text-[11px] font-semibold text-black/50">
-                          Showing top 12 retailers. Filter use karke specific retailer dekho.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-2 text-[11px] text-black/50">
-                Note: Order number / IDs hidden. Collection totals strictly from <b>collectedAmount</b>.
               </div>
             </div>
           )}

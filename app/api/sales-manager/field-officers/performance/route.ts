@@ -1,3 +1,4 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/sales-manager/field-officers/performance/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSalesManager } from "@/lib/sales-manager/auth";
@@ -11,6 +12,10 @@ function jsonError(msg: string, status = 400) {
 function clean(s: any) {
   const x = String(s ?? "").trim();
   return x.length ? x : "";
+}
+function n(v: any) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
 }
 
 function asDateYMD(ymd: string) {
@@ -71,13 +76,29 @@ function prevRange(period: string, fromYMD: string, toYMD: string) {
 }
 
 function pctGrowth(curr: number, prev: number) {
-  if (!Number.isFinite(curr)) curr = 0;
-  if (!Number.isFinite(prev)) prev = 0;
-  if (prev <= 0) {
-    if (curr <= 0) return 0;
-    return 100;
-  }
+  curr = n(curr);
+  prev = n(prev);
+  if (prev <= 0) return curr <= 0 ? 0 : 100;
   return Math.round(((curr - prev) / prev) * 1000) / 10;
+}
+
+function monthKeyOfUTC(d: Date) {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+function monthKeyAddUTC(base: Date, add: number) {
+  const d = new Date(base);
+  d.setUTCDate(1);
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCMonth(d.getUTCMonth() + add);
+  return monthKeyOfUTC(d);
+}
+
+function monthRangeUTC(monthKey: string) {
+  const [y, m] = monthKey.split("-").map((x) => Number(x));
+  if (!y || !m || m < 1 || m > 12) return null;
+  const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+  const endExclusive = new Date(Date.UTC(y, m, 1, 0, 0, 0));
+  return { start, endExclusive };
 }
 
 export async function GET(req: Request) {
@@ -97,6 +118,11 @@ export async function GET(req: Request) {
     const rng = rangeFromTo(from, to);
     if (!rng) return jsonError("Invalid date range. Use from=YYYY-MM-DD&to=YYYY-MM-DD (from <= to)", 400);
 
+    // 🔥 Determine CURRENT month from "to" date (your requirement)
+    const toD = asDateYMD(to)?.start || new Date();
+    const thisMonthKey = monthKeyOfUTC(toD); // e.g. 2026-02
+    const nextMonthKey = monthKeyAddUTC(toD, 1); // e.g. 2026-03
+
     const managedDists = await prisma.distributor.findMany({
       where:
         auth.role === "ADMIN"
@@ -106,7 +132,7 @@ export async function GET(req: Request) {
           : distributorId
           ? { id: distributorId, salesManagerId: auth.userId }
           : { salesManagerId: auth.userId },
-      select: { id: true, name: true, code: true },
+      select: { id: true },
     });
 
     const distIds = managedDists.map((d) => d.id);
@@ -123,7 +149,29 @@ export async function GET(req: Request) {
 
     const foIds = fos.map((x) => x.id);
 
-    // ✅ FO -> assigned retailers (SOURCE OF TRUTH: RetailerAssignmentActive)
+    // ✅ NEXT MONTH targets (editable)
+    const nextTargets = await prisma.fieldOfficerTarget.findMany({
+      where: { foUserId: { in: foIds }, monthKey: nextMonthKey },
+      select: { foUserId: true, targetValue: true, locked: true },
+    });
+
+    const nextTargetMap = new Map<string, { value: number | null; locked: boolean }>();
+    for (const t of nextTargets) {
+      nextTargetMap.set(t.foUserId, { value: t.targetValue == null ? null : n(t.targetValue), locked: !!t.locked });
+    }
+
+    // ✅ THIS MONTH target = from DB if exists, otherwise rollover from previous month's "next target"
+    // Rule: If Sales Manager sets "next month target" = 30000 in Feb,
+    // then in March that becomes "this month target".
+    // So thisMonthTarget should read FieldOfficerTarget for monthKey=thisMonthKey.
+    const thisTargets = await prisma.fieldOfficerTarget.findMany({
+      where: { foUserId: { in: foIds }, monthKey: thisMonthKey },
+      select: { foUserId: true, targetValue: true, locked: true },
+    });
+    const thisTargetMap = new Map<string, number>();
+    for (const t of thisTargets) thisTargetMap.set(t.foUserId, n(t.targetValue));
+
+    // ✅ FO -> assigned retailers (source: RetailerAssignmentActive)
     const maps = await prisma.retailerAssignmentActive.findMany({
       where: { foUserId: { in: foIds } },
       select: { foUserId: true, retailerId: true },
@@ -139,14 +187,15 @@ export async function GET(req: Request) {
 
     const allRetailerIds = Array.from(new Set(maps.map((m) => m.retailerId).filter(Boolean))) as string[];
 
+    // ✅ even if no retailers, still return target fields
     if (!allRetailerIds.length) {
       const rows = fos.map((fo) => ({
         foId: fo.id,
         foName: fo.name,
-        target: null as number | null,
         distributors: fo.distributorId ? 1 : 0,
         retailersTotal: 0,
         retailersActive: 0,
+        newRetailers: 0,
         orders: 0,
         sales: 0,
         aov: 0,
@@ -154,8 +203,15 @@ export async function GET(req: Request) {
         audits: 0,
         collection: 0,
         convPct: 0,
+        thisMonthTarget: thisTargetMap.get(fo.id) || 0,
+        nextMonthTarget: nextTargetMap.get(fo.id)?.value ?? null,
+        nextMonthLocked: nextTargetMap.get(fo.id)?.locked ?? false,
+        achievementThisMonth: 0,
+        achievementPct: null,
+        thisMonthKey,
+        nextMonthKey,
       }));
-      return NextResponse.json({ ok: true, period, from, to, rows });
+      return NextResponse.json({ ok: true, period, from, to, rows, thisMonthKey, nextMonthKey });
     }
 
     const prev = prevRange(period, from, to);
@@ -166,12 +222,14 @@ export async function GET(req: Request) {
       if (m.retailerId) foByRetailer.set(m.retailerId, m.foUserId);
     }
 
+    // Orders in selected period
     const ordersCurr = await prisma.order.findMany({
       where: { retailerId: { in: allRetailerIds }, createdAt: { gte: rng.start, lt: rng.endExclusive } },
       select: { retailerId: true, totalAmount: true },
       take: 200000,
     });
 
+    // Orders in previous period
     const ordersPrev = prevRng
       ? await prisma.order.findMany({
           where: { retailerId: { in: allRetailerIds }, createdAt: { gte: prevRng.start, lt: prevRng.endExclusive } },
@@ -188,15 +246,15 @@ export async function GET(req: Request) {
       const foId = o.retailerId ? foByRetailer.get(o.retailerId) : null;
       if (!foId) continue;
       foOrdersCount.set(foId, (foOrdersCount.get(foId) || 0) + 1);
-      foOrdersSales.set(foId, (foOrdersSales.get(foId) || 0) + Number(o.totalAmount || 0));
+      foOrdersSales.set(foId, (foOrdersSales.get(foId) || 0) + n(o.totalAmount));
     }
-
     for (const o of ordersPrev) {
       const foId = o.retailerId ? foByRetailer.get(o.retailerId) : null;
       if (!foId) continue;
-      foPrevSales.set(foId, (foPrevSales.get(foId) || 0) + Number(o.totalAmount || 0));
+      foPrevSales.set(foId, (foPrevSales.get(foId) || 0) + n(o.totalAmount));
     }
 
+    // Collections (ledger credit)
     const ledgerRows = await prisma.retailerLedger.findMany({
       where: { retailerId: { in: allRetailerIds }, type: "CREDIT", date: { gte: rng.start, lt: rng.endExclusive } },
       select: { retailerId: true, amount: true },
@@ -207,9 +265,10 @@ export async function GET(req: Request) {
     for (const l of ledgerRows) {
       const foId = l.retailerId ? foByRetailer.get(l.retailerId) : null;
       if (!foId) continue;
-      foCollection.set(foId, (foCollection.get(foId) || 0) + Number(l.amount || 0));
+      foCollection.set(foId, (foCollection.get(foId) || 0) + n(l.amount));
     }
 
+    // Audits count
     const audits = await prisma.retailerStockAudit.groupBy({
       by: ["fieldOfficerId"],
       where: { fieldOfficerId: { in: foIds }, auditDate: { gte: rng.start, lt: rng.endExclusive } },
@@ -217,8 +276,8 @@ export async function GET(req: Request) {
     });
     const foAudits = new Map(audits.map((a) => [a.fieldOfficerId, a._count._all]));
 
+    // Active retailers = any order/collection/audit within period
     const activeSetByFO = new Map<string, Set<string>>();
-
     for (const o of ordersCurr) {
       if (!o.retailerId) continue;
       const foId = foByRetailer.get(o.retailerId);
@@ -227,7 +286,6 @@ export async function GET(req: Request) {
       set.add(o.retailerId);
       activeSetByFO.set(foId, set);
     }
-
     for (const l of ledgerRows) {
       if (!l.retailerId) continue;
       const foId = foByRetailer.get(l.retailerId);
@@ -236,7 +294,6 @@ export async function GET(req: Request) {
       set.add(l.retailerId);
       activeSetByFO.set(foId, set);
     }
-
     const auditActive = await prisma.retailerStockAudit.findMany({
       where: { fieldOfficerId: { in: foIds }, auditDate: { gte: rng.start, lt: rng.endExclusive } },
       select: { fieldOfficerId: true, retailerId: true },
@@ -247,6 +304,37 @@ export async function GET(req: Request) {
       const set = activeSetByFO.get(a.fieldOfficerId) || new Set<string>();
       set.add(a.retailerId);
       activeSetByFO.set(a.fieldOfficerId, set);
+    }
+
+    // ✅ NEW RETAILERS in selected period: retailer createdAt in range and assigned to FO (via active map)
+    const newRetailers = await prisma.retailer.findMany({
+      where: { id: { in: allRetailerIds }, createdAt: { gte: rng.start, lt: rng.endExclusive } },
+      select: { id: true },
+      take: 200000,
+    });
+    const newRetailerSet = new Set(newRetailers.map((r) => r.id));
+    const foNewRetailers = new Map<string, number>();
+    for (const rid of newRetailerSet) {
+      const foId = foByRetailer.get(rid);
+      if (!foId) continue;
+      foNewRetailers.set(foId, (foNewRetailers.get(foId) || 0) + 1);
+    }
+
+    // ✅ Current month achievement = orders sum in CURRENT month range (not selected period)
+    const thisMonthRng = monthRangeUTC(thisMonthKey);
+    const ordersThisMonth = thisMonthRng
+      ? await prisma.order.findMany({
+          where: { retailerId: { in: allRetailerIds }, createdAt: { gte: thisMonthRng.start, lt: thisMonthRng.endExclusive } },
+          select: { retailerId: true, totalAmount: true },
+          take: 200000,
+        })
+      : [];
+
+    const foAchThisMonth = new Map<string, number>();
+    for (const o of ordersThisMonth) {
+      const foId = o.retailerId ? foByRetailer.get(o.retailerId) : null;
+      if (!foId) continue;
+      foAchThisMonth.set(foId, (foAchThisMonth.get(foId) || 0) + n(o.totalAmount));
     }
 
     const rows = fos.map((fo) => {
@@ -264,16 +352,20 @@ export async function GET(req: Request) {
       const collection = foCollection.get(fo.id) || 0;
 
       const activeRetailers = (activeSetByFO.get(fo.id) || new Set()).size;
-
       const convPct = retailersTotal > 0 ? Math.round(((orders / retailersTotal) * 100) * 10) / 10 : 0;
+
+      const thisMonthTarget = thisTargetMap.get(fo.id) || 0;
+      const achievementThisMonth = foAchThisMonth.get(fo.id) || 0;
+      const achievementPct =
+        thisMonthTarget > 0 ? Math.round(((achievementThisMonth / thisMonthTarget) * 100) * 10) / 10 : null;
 
       return {
         foId: fo.id,
         foName: fo.name,
-        target: null as number | null,
         distributors: fo.distributorId ? 1 : 0,
         retailersTotal,
         retailersActive: activeRetailers,
+        newRetailers: foNewRetailers.get(fo.id) || 0,
         orders,
         sales,
         aov,
@@ -281,6 +373,18 @@ export async function GET(req: Request) {
         audits: auditsCount,
         collection,
         convPct,
+
+        // ✅ UI expected fields
+        thisMonthTarget,
+        nextMonthTarget: nextTargetMap.get(fo.id)?.value ?? null,
+        nextMonthLocked: nextTargetMap.get(fo.id)?.locked ?? false,
+
+        // ✅ current month achievement for display
+        achievementThisMonth,
+        achievementPct,
+
+        thisMonthKey,
+        nextMonthKey,
       };
     });
 
@@ -291,6 +395,8 @@ export async function GET(req: Request) {
       to,
       prevFrom: prev?.from || null,
       prevTo: prev?.to || null,
+      thisMonthKey,
+      nextMonthKey,
       rows,
     });
   } catch (e: any) {

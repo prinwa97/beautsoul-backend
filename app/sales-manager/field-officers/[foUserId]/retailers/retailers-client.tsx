@@ -39,11 +39,19 @@ function n(v: any) {
   return Number.isFinite(x) ? x : 0;
 }
 function inr(v: number) {
-  try { return v.toLocaleString("en-IN"); } catch { return String(v); }
+  try {
+    return v.toLocaleString("en-IN");
+  } catch {
+    return String(v);
+  }
 }
 function fmtDate(iso: string | null) {
   if (!iso) return "-";
-  try { return new Date(iso).toLocaleString("en-IN", { year: "numeric", month: "short", day: "2-digit" }); } catch { return iso; }
+  try {
+    return new Date(iso).toLocaleString("en-IN", { year: "numeric", month: "short", day: "2-digit" });
+  } catch {
+    return iso;
+  }
 }
 
 function Badge({ text }: { text?: string | null }) {
@@ -71,16 +79,14 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
 
   const [foName, setFoName] = useState<string>("");
 
-  // ✅ distributor step (locked to FO)
+  // distributor locked to FO
   const [foDistributorId, setFoDistributorId] = useState<string>("");
   const [foDistributorName, setFoDistributorName] = useState<string>("");
 
-  // ✅ Summary (working)
   const [sumLoading, setSumLoading] = useState(true);
   const [sumErr, setSumErr] = useState("");
   const [summary, setSummary] = useState<any>(null);
 
-  // last 30 days
   const period = useMemo(() => {
     const to = new Date();
     const from = new Date(to.getTime() - 29 * 24 * 60 * 60 * 1000);
@@ -92,11 +98,9 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
-  // assigned
   const [aq, setAq] = useState("");
   const [assigned, setAssigned] = useState<AssignedRow[]>([]);
 
-  // unassigned
   const [uq, setUq] = useState("");
   const [unassigned, setUnassigned] = useState<RetailerLite[]>([]);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -161,19 +165,18 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
     setLoading(true);
     setToast("");
     try {
-      const url =
-        `/api/sales-manager/field-officers/retailers/unassigned?distributorId=${encodeURIComponent(
-          foDistributorId
-        )}&q=${encodeURIComponent(uq)}&take=300`;
+      const url = `/api/sales-manager/field-officers/retailers/unassigned?distributorId=${encodeURIComponent(
+        foDistributorId
+      )}&q=${encodeURIComponent(uq)}&take=300`;
 
       const res = await fetch(url, { cache: "no-store" });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) throw new Error(data?.error || "Failed to load unassigned");
 
-      const rows: RetailerLite[] = Array.isArray(data.retailers) ? data.retailers : [];
+      // ✅ FIX: backend returns { ok:true, rows:[...] }
+      const rows: RetailerLite[] = Array.isArray(data.rows) ? data.rows : [];
       setUnassigned(rows);
 
-      // keep only visible selections
       setSelected((prev) => {
         const keep: Record<string, boolean> = {};
         const set = new Set(rows.map((r) => r.id));
@@ -200,15 +203,16 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, foDistributorId]);
 
-  async function doUnassign(retailerId: string) {
-    if (!retailerId) return;
+  // ✅ FIX: backend expects mapId
+  async function doUnassign(mapId: string) {
+    if (!mapId) return;
     setLoading(true);
     setToast("");
     try {
       const res = await fetch("/api/sales-manager/field-officers/retailers/unassign", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ retailerId }),
+        body: JSON.stringify({ mapId }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.ok) throw new Error(data?.error || "Unassign failed");
@@ -257,25 +261,31 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="w-full max-w-none px-2 md:px-4 py-4">
-        {/* Header */}
         <div className="mb-3 flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="text-xl font-extrabold">FO Working + Retailer Assignment</div>
             <div className="mt-1 text-sm font-bold text-black/70 truncate">Field Officer: {foName || "-"}</div>
-            <div className="mt-0.5 text-xs font-bold text-black/50">Period: {period.from} → {period.to} (last 30 days)</div>
+            <div className="mt-0.5 text-xs font-bold text-black/50">
+              Period: {period.from} → {period.to} (last 30 days)
+            </div>
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => router.back()} className="shrink-0 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-black hover:bg-gray-50">
+            <button
+              onClick={() => router.back()}
+              className="shrink-0 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-black hover:bg-gray-50"
+            >
               ← Back
             </button>
-            <button onClick={() => loadSummary()} className="shrink-0 rounded-xl border border-black bg-black px-3 py-2 text-sm font-black text-white hover:opacity-90">
+            <button
+              onClick={() => loadSummary()}
+              className="shrink-0 rounded-xl border border-black bg-black px-3 py-2 text-sm font-black text-white hover:opacity-90"
+            >
               Refresh
             </button>
           </div>
         </div>
 
-        {/* Summary */}
         <div className="rounded-2xl border border-black/10 bg-white p-4">
           {sumLoading ? (
             <div className="text-sm font-bold text-black/60">Loading summary...</div>
@@ -295,24 +305,26 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
           )}
         </div>
 
-        {/* Toast */}
         {toast ? (
           <div className="mt-3 rounded-xl border border-black/10 bg-white p-3 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div className="text-sm font-bold text-black/80">{toast}</div>
-              <button onClick={() => setToast("")} className="rounded-lg border border-black/10 px-2 py-1 text-xs font-black hover:bg-gray-50">
+              <button
+                onClick={() => setToast("")}
+                className="rounded-lg border border-black/10 px-2 py-1 text-xs font-black hover:bg-gray-50"
+              >
                 X
               </button>
             </div>
           </div>
         ) : null}
 
-        {/* Tabs + stats */}
         <div className="mt-3 mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setTab("ASSIGNED")}
-              className={clsx("rounded-xl border px-4 py-2 text-sm font-black",
+              className={clsx(
+                "rounded-xl border px-4 py-2 text-sm font-black",
                 tab === "ASSIGNED" ? "border-black bg-black text-white" : "border-black/10 bg-white hover:bg-gray-50"
               )}
             >
@@ -321,7 +333,8 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
 
             <button
               onClick={() => setTab("UNASSIGNED")}
-              className={clsx("rounded-xl border px-4 py-2 text-sm font-black",
+              className={clsx(
+                "rounded-xl border px-4 py-2 text-sm font-black",
                 tab === "UNASSIGNED" ? "border-black bg-black text-white" : "border-black/10 bg-white hover:bg-gray-50"
               )}
             >
@@ -339,17 +352,19 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
           </div>
         </div>
 
-        {/* Assignment box */}
         <div className="rounded-2xl border border-black/10 bg-white shadow-sm">
           <div className="border-b border-black/10 p-3">
             <div className="text-sm font-black">{tab === "ASSIGNED" ? "Assigned Retailers" : "Assign Retailers"}</div>
 
-            {/* ✅ STEP 1: Distributor (locked) */}
             {tab === "UNASSIGNED" ? (
               <div className="mt-2 rounded-2xl border border-black/10 bg-gray-50 p-3">
                 <div className="text-[11px] font-black text-black/60">Step 1: Distributor (FO)</div>
                 <div className="mt-1 text-sm font-extrabold">
-                  {foDistributorName ? foDistributorName : foDistributorId ? `Distributor: ${foDistributorId}` : "Loading..."}
+                  {foDistributorName
+                    ? foDistributorName
+                    : foDistributorId
+                    ? `Distributor: ${foDistributorId}`
+                    : "Loading..."}
                 </div>
                 <div className="mt-0.5 text-xs font-bold text-black/50">
                   Retailers list below is from this distributor only.
@@ -357,7 +372,6 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
               </div>
             ) : null}
 
-            {/* Search */}
             <div className="mt-3 flex w-full gap-2">
               {tab === "ASSIGNED" ? (
                 <>
@@ -367,7 +381,10 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                     placeholder="Search name / phone / city..."
                     className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-bold outline-none focus:border-black"
                   />
-                  <button onClick={loadAssigned} className="shrink-0 rounded-xl border border-black bg-black px-4 py-2 text-sm font-black text-white hover:opacity-90">
+                  <button
+                    onClick={loadAssigned}
+                    className="shrink-0 rounded-xl border border-black bg-black px-4 py-2 text-sm font-black text-white hover:opacity-90"
+                  >
                     Search
                   </button>
                 </>
@@ -379,7 +396,10 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                     placeholder="Search name / phone / city..."
                     className="w-full rounded-xl border border-black/10 px-3 py-2 text-sm font-bold outline-none focus:border-black"
                   />
-                  <button onClick={loadUnassigned} className="shrink-0 rounded-xl border border-black bg-black px-4 py-2 text-sm font-black text-white hover:opacity-90">
+                  <button
+                    onClick={loadUnassigned}
+                    className="shrink-0 rounded-xl border border-black bg-black px-4 py-2 text-sm font-black text-white hover:opacity-90"
+                  >
                     Search
                   </button>
                 </>
@@ -404,7 +424,8 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                               <Badge text={r?.status || "-"} />
                             </div>
                             <div className="mt-0.5 text-xs font-bold text-black/60">
-                              {r?.phone ? `📞 ${r.phone}` : ""} {r?.city ? ` • ${r.city}` : ""} • Assigned: {fmtDate(row.assignedAt)}
+                              {r?.phone ? `📞 ${r.phone}` : ""} {r?.city ? ` • ${r.city}` : ""} • Assigned:{" "}
+                              {fmtDate(row.assignedAt)}
                             </div>
                           </div>
 
@@ -416,7 +437,7 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                               Inactive: {row.inactiveDays ?? "-"} days
                             </div>
                             <button
-                              onClick={() => doUnassign(row.retailerId)}
+                              onClick={() => doUnassign(row.mapId)}
                               className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:opacity-90"
                             >
                               Unassign
@@ -443,7 +464,9 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                   })}
                 </div>
               ) : (
-                <div className="rounded-xl border border-black/10 bg-gray-50 p-4 text-sm font-bold">No assigned retailers yet.</div>
+                <div className="rounded-xl border border-black/10 bg-gray-50 p-4 text-sm font-bold">
+                  No assigned retailers yet.
+                </div>
               )
             ) : !foDistributorId ? (
               <div className="rounded-xl border border-black/10 bg-gray-50 p-4 text-sm font-bold">
@@ -455,10 +478,16 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                   <div className="text-sm font-black">Step 2: Select retailers (from this distributor)</div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button onClick={() => toggleAll(true)} className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-black hover:bg-gray-50">
+                    <button
+                      onClick={() => toggleAll(true)}
+                      className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-black hover:bg-gray-50"
+                    >
                       Select All
                     </button>
-                    <button onClick={() => toggleAll(false)} className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-black hover:bg-gray-50">
+                    <button
+                      onClick={() => toggleAll(false)}
+                      className="rounded-xl border border-black/10 bg-white px-3 py-2 text-xs font-black hover:bg-gray-50"
+                    >
                       Clear
                     </button>
                     <button
@@ -466,7 +495,9 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                       onClick={doAssignSelected}
                       className={clsx(
                         "rounded-xl border px-4 py-2 text-xs font-black",
-                        selectedCount ? "border-black bg-black text-white hover:opacity-90" : "border-black/10 bg-gray-100 text-black/40"
+                        selectedCount
+                          ? "border-black bg-black text-white hover:opacity-90"
+                          : "border-black/10 bg-gray-100 text-black/40"
                       )}
                     >
                       Assign Now ({selectedCount})
@@ -477,7 +508,13 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                 {unassigned.map((r) => {
                   const checked = !!selected[r.id];
                   return (
-                    <div key={r.id} className={clsx("rounded-2xl border p-3", checked ? "border-black bg-gray-50" : "border-black/10 bg-white hover:bg-gray-50")}>
+                    <div
+                      key={r.id}
+                      className={clsx(
+                        "rounded-2xl border p-3",
+                        checked ? "border-black bg-gray-50" : "border-black/10 bg-white hover:bg-gray-50"
+                      )}
+                    >
                       <label className="flex min-w-0 cursor-pointer items-start gap-3">
                         <input
                           type="checkbox"
@@ -501,7 +538,9 @@ export default function FieldOfficerRetailersClient({ foUserId }: { foUserId: st
                 })}
               </div>
             ) : (
-              <div className="rounded-xl border border-black/10 bg-gray-50 p-4 text-sm font-bold">No unassigned retailers found.</div>
+              <div className="rounded-xl border border-black/10 bg-gray-50 p-4 text-sm font-bold">
+                No unassigned retailers found.
+              </div>
             )}
           </div>
         </div>
