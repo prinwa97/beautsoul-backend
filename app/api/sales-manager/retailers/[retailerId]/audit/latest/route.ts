@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+// app/api/sales-manager/retailers/[retailerId]/audit/latest/route.ts
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSalesManager } from "@/lib/sales-manager/auth";
 
@@ -9,20 +10,28 @@ function clean(v: any) {
   return String(v ?? "").trim();
 }
 
-export async function GET(req: Request, ctx: { params: { retailerId: string } }) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ retailerId: string }> } // ✅ Next.js 16 expects Promise
+) {
   try {
     await requireSalesManager(["SALES_MANAGER", "ADMIN"]);
 
-    const retailerId = String(ctx?.params?.retailerId || "").trim();
-    if (!retailerId) {
-      return NextResponse.json({ ok: false, error: "RETAILER_ID_REQUIRED" }, { status: 400 });
+    const { retailerId } = await params; // ✅ await params
+    const rid = clean(retailerId);
+
+    if (!rid) {
+      return NextResponse.json(
+        { ok: false, error: "RETAILER_ID_REQUIRED" },
+        { status: 400 }
+      );
     }
 
     const url = new URL(req.url);
     const productName = clean(url.searchParams.get("productName"));
 
     const audit = await prisma.retailerStockAudit.findFirst({
-      where: { retailerId },
+      where: { retailerId: rid },
       orderBy: { createdAt: "desc" },
       select: { id: true, createdAt: true },
     });
