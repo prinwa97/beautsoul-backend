@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSalesManager } from "@/app/lib/sales-manager/auth";
+import { requireSalesManager } from "@/lib/sales-manager/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,17 +15,20 @@ function parseMonthToRange(month: string) {
   const [yy, mm] = m.split("-").map((x) => Number(x));
   if (!yy || !mm || mm < 1 || mm > 12) return null;
 
-  // India TZ safe: month boundaries in local time can shift in ISO,
-  // but for postgres DateTime it is ok. We'll use JS Date.
+  // Month boundaries local time (ok for postgres DateTime usage here)
   const from = new Date(yy, mm - 1, 1, 0, 0, 0, 0);
   const to = new Date(yy, mm, 1, 0, 0, 0, 0);
   return { from, to };
 }
 
-function monthKey(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
+function cleanStr(v: any) {
+  const s = String(v ?? "").trim();
+  return s.length ? s : "";
+}
+
+function num(v: any) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
 }
 
 function pickRetailerOrderDelegate(pr: any) {
@@ -68,6 +71,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
   const pr: any = prisma as any;
 
+  // -------------------------
+  // 1) ORDERS
+  // -------------------------
   const ordFound = pickRetailerOrderDelegate(pr);
   if (!ordFound) {
     return jsonError("RETAILER_ORDER_MODEL_NOT_FOUND", 500, {
@@ -78,8 +84,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   }
   const Order = ordFound.delegate;
 
-  // ✅ Orders in this month
-  // IMPORTANT: OrderItem has NO productId in your schema -> do NOT select it.
   const orders = await Order.findMany({
     where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
     orderBy: { createdAt: "desc" },
@@ -115,7 +119,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
     });
   });
 
-  // ✅ Aggregate ordered products month-wise (by productName only)
+  // -------------------------
+  // 2) ORDERED PRODUCTS AGG
+  // -------------------------
   const productAgg: Record<string, { productName: string; qty: number; amount: number; orders: number }> = {};
   for (const o of orders as any[]) {
     const items = Array.isArray(o.items) ? o.items : [];
@@ -131,27 +137,25 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   }
   const orderedProductsBase = Object.values(productAgg).sort((a, b) => b.amount - a.amount);
 
-  // ✅ Pending / Physical available stock (safe)
+  // -------------------------
+  // 3) SYSTEM PENDING STOCK (StockLot)
+  // -------------------------
   const stockFound = pickStockLotDelegate(pr);
   let pendingByProduct: Array<{ productName: string; qtyOnHandPcs: number }> = [];
   let stockModelKey: string | null = null;
+  let stockRowsCount = 0;
 
   if (stockFound) {
     const Stock: any = stockFound.delegate;
     stockModelKey = stockFound.key;
 
-    // Your error shows: retailerId is NOT a valid where arg.
-    // So we only use ownerType+ownerId (your other code already uses this pattern).
     const rows = await Stock.findMany({
       where: { ownerType: "RETAILER", ownerId: retailerId },
-      select: {
-        productName: true,
-        qtyOnHandPcs: true,
-        qty: true,
-        quantity: true,
-      },
-      take: 2000,
+      select: { productName: true, qtyOnHandPcs: true, qty: true, quantity: true },
+      take: 5000,
     }).catch(async () => []);
+
+    stockRowsCount = Array.isArray(rows) ? rows.length : 0;
 
     const map: Record<string, { productName: string; qtyOnHandPcs: number }> = {};
     for (const r of rows as any[]) {
@@ -167,11 +171,84 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   const pendingIndex = new Map<string, number>();
   for (const p of pendingByProduct) pendingIndex.set(p.productName.toLowerCase(), p.qtyOnHandPcs);
 
-  const orderedProducts = orderedProductsBase.map((p) => ({
-    ...p,
-    pendingQtyPcs: pendingIndex.get(p.productName.toLowerCase()) ?? 0,
-  }));
+  // -------------------------
+  // 4) AUDIT PHYSICAL STOCK (RetailerStockAudit + Items)
+  // -------------------------
+  // Prefer audit within month, else fallback latest overall
+  let audit = await prisma.retailerStockAudit.findFirst({
+    where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, createdAt: true },
+  });
 
+  if (!audit) {
+    audit = await prisma.retailerStockAudit.findFirst({
+      where: { retailerId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, createdAt: true },
+    });
+  }
+
+  const auditIndex = new Map<string, number>();
+  let auditItemsCount = 0;
+
+  if (audit?.id) {
+    const agg = await prisma.retailerStockAuditItem.groupBy({
+      by: ["productName"],
+      where: { auditId: audit.id },
+      _sum: { physicalQty: true },
+      _count: { _all: true },
+    });
+
+    for (const r of agg) {
+      const pn = cleanStr(r.productName) || "Unknown";
+      const key = pn.toLowerCase();
+      const sum = Number(r._sum.physicalQty || 0);
+      auditIndex.set(key, sum);
+      auditItemsCount += Number(r._count?._all || 0);
+    }
+  }
+
+  // -------------------------
+  // 5) MERGE INTO ORDERED PRODUCTS
+  // -------------------------
+  const orderedProducts = orderedProductsBase.map((p) => {
+    const key = p.productName.toLowerCase();
+    const pendingQtyPcs = pendingIndex.get(key) ?? 0;
+    const auditQtyPcs = auditIndex.get(key) ?? null;
+
+    const hasAudit = typeof auditQtyPcs === "number";
+    const physicalQtyPcs = hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : pendingQtyPcs;
+
+    const physicalSource = hasAudit ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE";
+
+    return {
+      ...p,
+      pendingQtyPcs,
+      auditQtyPcs: hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : null,
+      physicalQtyPcs,
+      physicalSource,
+    };
+  });
+
+  // Pending stock list me bhi audit merge (so right panel can show physical)
+  const pendingStock = pendingByProduct.map((p) => {
+    const key = p.productName.toLowerCase();
+    const auditQtyPcs = auditIndex.get(key) ?? null;
+    const hasAudit = typeof auditQtyPcs === "number";
+    const physicalQtyPcs = hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : p.qtyOnHandPcs;
+
+    return {
+      ...p,
+      auditQtyPcs: hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : null,
+      physicalQtyPcs,
+      physicalSource: hasAudit ? "AUDIT" : p.qtyOnHandPcs > 0 ? "PENDING" : "NONE",
+    };
+  });
+
+  // -------------------------
+  // SUMMARY
+  // -------------------------
   const totalOrders = (orders as any[]).length;
   const totalSales = (orders as any[]).reduce((a, o: any) => a + Number(o?.totalAmount || 0), 0);
 
@@ -181,8 +258,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
       month,
       orderModelKey: ordFound.key,
       stockModelKey,
+      stockRowsCount,
       hasPendingStock: pendingByProduct.length > 0,
       range: { from: range.from.toISOString(), to: range.to.toISOString() },
+
+      // ✅ NEW: audit info (debug + UI)
+      auditId: audit?.id || null,
+      auditAt: audit?.createdAt ? new Date(audit.createdAt).toISOString() : null,
+      auditItemsCount,
     },
     summary: {
       totalOrders,
@@ -191,6 +274,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
     },
     orders,
     orderedProducts,
-    pendingStock: pendingByProduct,
+    pendingStock,
   });
 }

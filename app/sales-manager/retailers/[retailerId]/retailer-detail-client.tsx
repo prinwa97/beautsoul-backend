@@ -1,3 +1,4 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/sales-manager/retailers/[retailerId]/retailer-detail-client.tsx
 "use client";
 
 import Link from "next/link";
@@ -14,23 +15,48 @@ type Resp = {
 type MonthDetailResp = {
   ok: boolean;
   error?: string;
+
   meta?: {
     month: string;
     orderModelKey: string;
     stockModelKey?: string | null;
+    stockRowsCount?: number;
     hasPendingStock?: boolean;
     range?: { from: string; to: string };
+
+    // NEW (from updated API)
+    auditId?: string | null;
+    auditAt?: string | null;
+    auditItemsCount?: number;
   };
+
   summary?: { totalOrders: number; totalSales: number; aov: number };
   orders?: any[];
+
   orderedProducts?: Array<{
     productName: string;
     qty: number;
     amount: number;
     orders: number;
+
+    // system stock
     pendingQtyPcs?: number;
+
+    // audit aware
+    auditQtyPcs?: number | null;
+    physicalQtyPcs?: number; // final physical (AUDIT > PENDING)
+    physicalSource?: "AUDIT" | "PENDING" | "NONE";
   }>;
-  pendingStock?: Array<{ productName: string; qtyOnHandPcs: number }>;
+
+  pendingStock?: Array<{
+    productName: string;
+    qtyOnHandPcs: number;
+
+    // audit aware
+    auditQtyPcs?: number | null;
+    physicalQtyPcs?: number;
+    physicalSource?: "AUDIT" | "PENDING" | "NONE";
+  }>;
 };
 
 function n(v: any) {
@@ -56,11 +82,17 @@ function pct(num: number, den: number) {
   return (num / den) * 100;
 }
 
+function sourceBadgeCls(src?: string) {
+  if (src === "AUDIT") return "bg-green-50 text-green-800 border-green-200";
+  if (src === "PENDING") return "bg-blue-50 text-blue-800 border-blue-200";
+  return "bg-gray-50 text-gray-800 border-gray-200";
+}
+
 export default function RetailerDetailClient({ retailerId }: { retailerId: string }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<Resp | null>(null);
 
-  // ✅ Modal states
+  // Modal states
   const [openMonth, setOpenMonth] = useState<string>("");
   const [modalOpen, setModalOpen] = useState(false);
   const [monthLoading, setMonthLoading] = useState(false);
@@ -157,12 +189,24 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
               <div className="text-xs font-semibold text-gray-500">Retailer</div>
               <div className="mt-1 text-xl font-black text-gray-900">{r?.name || "—"}</div>
               <div className="mt-2 text-sm text-gray-700">
-                <div>Phone: <span className="font-semibold">{r?.phone || "—"}</span></div>
-                <div>GST: <span className="font-semibold">{r?.gst || "—"}</span></div>
-                <div>City: <span className="font-semibold">{r?.city || "—"}</span></div>
-                <div>State: <span className="font-semibold">{r?.state || "—"}</span></div>
-                <div>Pincode: <span className="font-semibold">{r?.pincode || "—"}</span></div>
-                <div>Status: <span className="font-semibold">{r?.status || "—"}</span></div>
+                <div>
+                  Phone: <span className="font-semibold">{r?.phone || "—"}</span>
+                </div>
+                <div>
+                  GST: <span className="font-semibold">{r?.gst || "—"}</span>
+                </div>
+                <div>
+                  City: <span className="font-semibold">{r?.city || "—"}</span>
+                </div>
+                <div>
+                  State: <span className="font-semibold">{r?.state || "—"}</span>
+                </div>
+                <div>
+                  Pincode: <span className="font-semibold">{r?.pincode || "—"}</span>
+                </div>
+                <div>
+                  Status: <span className="font-semibold">{r?.status || "—"}</span>
+                </div>
               </div>
             </div>
 
@@ -188,7 +232,7 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
             </div>
           </div>
 
-          {/* Month-wise (row click -> modal) */}
+          {/* Month-wise */}
           <div className="mt-6 p-4 rounded-2xl border bg-white">
             <div className="text-lg font-black text-gray-900">Month-wise Sales (Click month row)</div>
 
@@ -212,7 +256,6 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
                     const aov = m.orders ? m.sales / m.orders : 0;
                     const soldQty = clamp0(n(m.orderQty) - n(m.physicalQty));
                     const sellThrough = pct(soldQty, n(m.orderQty));
-
                     const auditMissing = m.orders > 0 && n(m.physicalQty) === 0;
 
                     return (
@@ -252,15 +295,8 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
             </div>
           </div>
 
-          {/* ✅ Modal */}
-          {modalOpen ? (
-            <MonthModal
-              month={openMonth}
-              loading={monthLoading}
-              detail={monthDetail}
-              onClose={closeModal}
-            />
-          ) : null}
+          {/* Modal */}
+          {modalOpen ? <MonthModal month={openMonth} loading={monthLoading} detail={monthDetail} onClose={closeModal} /> : null}
         </>
       ) : null}
     </div>
@@ -278,7 +314,6 @@ function MonthModal({
   detail: MonthDetailResp | null;
   onClose: () => void;
 }) {
-  // close on ESC
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -287,23 +322,32 @@ function MonthModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const auditAt = detail?.meta?.auditAt ? dt(detail.meta.auditAt) : null;
+
   return (
     <div className="fixed inset-0 z-50">
-      {/* overlay */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
 
-      {/* modal */}
       <div className="absolute inset-0 flex items-center justify-center p-3">
         <div className="w-full max-w-6xl max-h-[90vh] overflow-auto rounded-2xl bg-white border shadow-xl">
           <div className="sticky top-0 bg-white border-b p-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-semibold text-gray-500">Month Detail</div>
               <div className="text-lg font-black text-gray-900">{month}</div>
+
+              {auditAt ? (
+                <div className="mt-1 text-xs text-gray-600">
+                  Latest Audit Used: <b>{auditAt}</b>
+                  {detail?.meta?.auditItemsCount ? <span className="text-gray-500"> · items: {detail.meta.auditItemsCount}</span> : null}
+                </div>
+              ) : (
+                <div className="mt-1 text-xs text-gray-600">
+                  Latest Audit Used: <b>—</b>
+                </div>
+              )}
             </div>
-            <button
-              onClick={onClose}
-              className="px-3 py-2 rounded-xl border bg-white text-sm font-black hover:bg-gray-50"
-            >
+
+            <button onClick={onClose} className="px-3 py-2 rounded-xl border bg-white text-sm font-black hover:bg-gray-50">
               ✕ Close
             </button>
           </div>
@@ -312,9 +356,7 @@ function MonthModal({
             {loading ? <div className="text-sm text-gray-600">Loading month detail…</div> : null}
 
             {!loading && detail && !detail.ok ? (
-              <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
-                Error: {detail.error || "UNKNOWN"}
-              </div>
+              <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {detail.error || "UNKNOWN"}</div>
             ) : null}
 
             {!loading && detail?.ok ? (
@@ -336,12 +378,15 @@ function MonthModal({
                   </div>
                 </div>
 
-                {/* Products */}
-                <div className="p-4 rounded-2xl border bg-white lg:col-span-2">
-                  <div className="text-base font-black text-gray-900">Products (Ordered + Pending)</div>
+                {/* ✅ Products (FULL ROW) — Stock(All) removed */}
+                <div className="p-4 rounded-2xl border bg-white lg:col-span-3">
+                  <div className="text-base font-black text-gray-900">Products (Ordered + Physical)</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    Physical = <b>AUDIT</b> (if available) else <b>PENDING</b>
+                  </div>
 
                   <div className="mt-3 overflow-x-auto border rounded-2xl bg-white">
-                    <table className="min-w-[900px] w-full text-[13px]">
+                    <table className="min-w-[1100px] w-full text-[13px]">
                       <thead className="bg-gray-50 border-b">
                         <tr className="text-left">
                           <TH>Product</TH>
@@ -349,45 +394,50 @@ function MonthModal({
                           <TH className="text-right">Order Qty</TH>
                           <TH className="text-right">Amount</TH>
                           <TH className="text-right">Pending Qty</TH>
+                          <TH className="text-right">Audit Qty</TH>
+                          <TH className="text-right">Physical</TH>
+                          <TH>Src</TH>
                         </tr>
                       </thead>
                       <tbody>
-                        {(detail.orderedProducts || []).map((p) => (
-                          <tr key={p.productName} className="border-t">
-                            <TD className="font-bold">{p.productName}</TD>
-                            <TD className="text-right">{p.orders}</TD>
-                            <TD className="text-right font-black">{p.qty}</TD>
-                            <TD className="text-right">₹{money(p.amount)}</TD>
-                            <TD className="text-right font-black">{Number(p.pendingQtyPcs || 0)}</TD>
-                          </tr>
-                        ))}
+                        {(detail.orderedProducts || []).map((p) => {
+                          const pendingQty = n(p.pendingQtyPcs);
+                          const auditQty = p.auditQtyPcs == null ? null : n(p.auditQtyPcs);
+
+                          // final physical preference: API > computed fallback
+                          const physicalQty =
+                            p.physicalQtyPcs == null ? (auditQty != null ? auditQty : pendingQty) : n(p.physicalQtyPcs);
+
+                          const src: "AUDIT" | "PENDING" | "NONE" =
+                            (p.physicalSource as any) ||
+                            (auditQty != null ? "AUDIT" : pendingQty > 0 ? "PENDING" : "NONE");
+
+                          return (
+                            <tr key={p.productName} className="border-t">
+                              <TD className="font-bold">{p.productName}</TD>
+                              <TD className="text-right">{p.orders}</TD>
+                              <TD className="text-right font-black">{p.qty}</TD>
+                              <TD className="text-right">₹{money(p.amount)}</TD>
+
+                              <TD className="text-right font-black">{pendingQty}</TD>
+                              <TD className="text-right font-black">{auditQty == null ? "—" : auditQty}</TD>
+                              <TD className="text-right font-black">{physicalQty}</TD>
+                              <TD>
+                                <Badge cls={sourceBadgeCls(src)}>{src}</Badge>
+                              </TD>
+                            </tr>
+                          );
+                        })}
+
                         {!(detail.orderedProducts || []).length ? (
                           <tr className="border-t">
-                            <TD colSpan={5} className="text-center text-gray-600 py-6">
+                            <TD colSpan={8} className="text-center text-gray-600 py-6">
                               No products found.
                             </TD>
                           </tr>
                         ) : null}
                       </tbody>
                     </table>
-                  </div>
-                </div>
-
-                {/* Pending Stock */}
-                <div className="p-4 rounded-2xl border bg-white">
-                  <div className="text-base font-black text-gray-900">Pending Stock (All)</div>
-                  <div className="mt-2 text-xs text-gray-500">Source: StockLot ownerType=RETAILER</div>
-
-                  <div className="mt-3 space-y-2 max-h-[360px] overflow-auto pr-1">
-                    {(detail.pendingStock || []).slice(0, 60).map((x) => (
-                      <div key={x.productName} className="flex items-center justify-between gap-2 p-2 rounded-xl border bg-white">
-                        <div className="text-sm font-semibold">{x.productName}</div>
-                        <div className="text-sm font-black">{x.qtyOnHandPcs}</div>
-                      </div>
-                    ))}
-                    {!(detail.pendingStock || []).length ? (
-                      <div className="text-sm text-gray-600">No pending stock rows.</div>
-                    ) : null}
                   </div>
                 </div>
 
