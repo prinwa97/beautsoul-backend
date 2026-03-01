@@ -2,12 +2,18 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // NOTE: Next.js 16+ me `eslint` key next.config.js me valid nahi hai.
-  // Lint ko alag se `npm run lint` se run karo (CI / local).
   reactStrictMode: true,
 
-  // optional: if you still want a no-op webpack hook
-  webpack: (config) => config,
+  // Next 16: Turbopack default hota hai.
+  // Empty object rakhne se Vercel/Turbopack warning/error silent ho jaata hai.
+  turbopack: {},
+
+  // NOTE:
+  // Next 16 me next.config.js ka "eslint" option supported nahi hai.
+  // Isliye isko hata rahe hain.
+  //
+  // Agar ESLint build pe fail na ho:
+  // package.json me next build ke saath lint disable kar do (neeche option 2).
 };
 
 module.exports = nextConfig;
