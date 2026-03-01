@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // =============================
@@ -199,6 +200,9 @@ model User {
   assignedHistoryTo    RetailerAssignmentHistory[] @relation("AssignHistoryToFo")
   assignedHistoryActor RetailerAssignmentHistory[] @relation("AssignHistoryActor")
 
+  transferBatchesFromFo RetailerTransferBatch[] @relation("TransferBatchFromFo")
+  transferBatchesToFo   RetailerTransferBatch[] @relation("TransferBatchToFo")
+
   // Distributor owner profile (optional)
   distributorProfile Distributor? @relation("Distributor_userIdToUser")
 
@@ -229,6 +233,10 @@ model User {
 
   // FO Stock Audits
   foStockAudits RetailerStockAudit[] @relation("FOStockAudits")
+
+    // Sales Manager AI tasks
+  salesManagerTasks      SalesManagerTask[]
+  salesManagerDailyCloses SalesManagerDailyClose[]
 
   @@index([distributorId])
   @@index([role])
@@ -280,8 +288,9 @@ model Distributor {
   inboundOrders   InboundOrder[]
   inboundReceives InboundReceive[]
 
-  retailerLedger RetailerLedger[]
-  invoices       Invoice[]
+  retailerLedger          RetailerLedger[]
+  invoices                Invoice[]
+  retailerTransferBatches RetailerTransferBatch[]
 
   @@index([status])
   @@index([salesManagerId])
@@ -1138,4 +1147,141 @@ model OrderRequestLog {
   result  String // "RECEIVED" | "CREATED" | "DEDUPED" | "ERROR"
   orderId String?
   error   String?
+}
+
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/prisma/schema.prisma
+// ✅ Add these models (and one optional field) for a proper, reversible “one-click transfer” design.
+
+model RetailerTransferBatch {
+  id             String   @id @default(cuid())
+  distributorId  String
+  fromFoUserId   String
+  toFoUserId     String
+  mode           String // "ALL" | "SELECTED"
+  note           String?
+  reason         String?
+  status         String   @default("DONE") // "DONE" | "ROLLED_BACK"
+  transferred    Int      @default(0)
+  historyCreated Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  distributor Distributor @relation(fields: [distributorId], references: [id])
+  fromFoUser  User        @relation("TransferBatchFromFo", fields: [fromFoUserId], references: [id])
+  toFoUser    User        @relation("TransferBatchToFo", fields: [toFoUserId], references: [id])
+
+  items RetailerTransferBatchItem[]
+}
+
+model RetailerTransferBatchItem {
+  id         String   @id @default(cuid())
+  batchId    String
+  retailerId String
+  createdAt  DateTime @default(now())
+
+  batch RetailerTransferBatch @relation(fields: [batchId], references: [id])
+
+  @@unique([batchId, retailerId])
+}
+
+// ✅ OPTIONAL (recommended): link history rows to batch for clean rollback and audit.
+// If your RetailerAssignmentHistory model exists, add this nullable field + relation:
+//
+// model RetailerAssignmentHistory {
+//   ...
+//   transferBatchId String?
+//   transferBatch   RetailerTransferBatch? @relation(fields: [transferBatchId], references: [id])
+//   ...
+// }
+// =============================
+// Sales Manager AI Tasks (Retailer-only, no payment)
+// =============================
+
+enum SalesTaskType {
+  REACTIVATE_RETAILER
+  UPSELL_PRODUCTS
+  CITY_FOCUS
+  SLOW_MOVER_REVIVAL
+  NEW_RETAILER_CONVERSION
+  INVESTIGATE_DROP
+  DAILY_CLOSE
+}
+
+enum SalesTaskStatus {
+  OPEN
+  DONE
+  OVERDUE
+  BLOCKED_REMARKS
+  RESCHEDULED
+}
+
+model SalesManagerTask {
+  id             String   @id @default(cuid())
+  salesManagerId String
+  day            DateTime // store startOfDay (00:00)
+
+  // ✅ relation (important)
+  salesManager User @relation(fields: [salesManagerId], references: [id], onDelete: Cascade)
+
+  type     SalesTaskType
+  title    String
+  priority Int             @default(2) // 1=high 2=med 3=low
+  dueAt    DateTime?
+  status   SalesTaskStatus @default(OPEN)
+
+  // targets snapshot
+  retailerIds   String[] @default([])
+  productNames  String[] @default([])
+  city          String?
+  distributorId String?
+
+  aiReason          String?
+  expectedImpactMin Int?
+  expectedImpactMax Int?
+
+  // completion / scoring
+  remarkQuality Int       @default(0) // 0..5
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  remarks SalesManagerTaskRemark[]
+
+  @@index([salesManagerId, day])
+  @@index([salesManagerId, status])
+
+  // ✅ required if you want createMany(skipDuplicates:true) to be meaningful
+  @@unique([salesManagerId, day, title])
+}
+
+model SalesManagerTaskRemark {
+  id     String @id @default(cuid())
+
+  taskId String
+  task   SalesManagerTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  remarkText   String
+  qualityScore Int     @default(0) // 0..5
+  aiFeedback   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+}
+
+model SalesManagerDailyClose {
+  id             String   @id @default(cuid())
+  salesManagerId String
+  day            DateTime // startOfDay (00:00)
+
+  // ✅ relation (recommended)
+  salesManager User @relation(fields: [salesManagerId], references: [id], onDelete: Cascade)
+
+  closingRemark    String
+  score            Int      @default(0)
+  penaltiesApplied String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([salesManagerId, day])
+  @@index([salesManagerId, day])
 }

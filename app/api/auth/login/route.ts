@@ -1,9 +1,10 @@
-// app/api/auth/login/route.ts
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/auth/login/route.ts
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { writeSession } from "@/lib/session";
-import { cookies } from "next/headers";
+
+console.log("🔥 LOGIN ROUTE LOADED v3");
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,39 +44,25 @@ export async function POST(req: Request) {
     });
 
     if (!user) {
-      return NextResponse.json(
-        { ok: false, error: "USER_NOT_FOUND", message: "User not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ ok: false, error: "USER_NOT_FOUND", message: "User not found" }, { status: 404 });
     }
 
     // ✅ HARD BLOCK inactive users
     const st = upper(user.status);
     if (st && st !== "ACTIVE") {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "ACCOUNT_INACTIVE",
-          message: "Your account is inactive. Please contact admin.",
-        },
+        { ok: false, error: "ACCOUNT_INACTIVE", message: "Your account is inactive. Please contact admin." },
         { status: 403 }
       );
     }
 
-    // ✅ passwordHash missing => treat as invalid
     if (!user.passwordHash) {
-      return NextResponse.json(
-        { ok: false, error: "INVALID_PASSWORD", message: "Invalid password" },
-        { status: 401 }
-      );
+      return NextResponse.json({ ok: false, error: "INVALID_PASSWORD", message: "Invalid password" }, { status: 401 });
     }
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
-      return NextResponse.json(
-        { ok: false, error: "INVALID_PASSWORD", message: "Invalid password" },
-        { status: 401 }
-      );
+      return NextResponse.json({ ok: false, error: "INVALID_PASSWORD", message: "Invalid password" }, { status: 401 });
     }
 
     // retailerId (only for RETAILER)
@@ -95,30 +82,17 @@ export async function POST(req: Request) {
       retailerId,
     };
 
-    // ✅ Signed cookie (recommended)
+    // ✅ Signed cookie ONLY (no legacy cookie)
     await writeSession({
       userId: sessionUser.id,
-      role: sessionUser.role,
+      role: String(sessionUser.role),
       distributorId: sessionUser.distributorId,
-      retailerId: sessionUser.retailerId,
-    } as any);
-
-    // ✅ Legacy cookie for routes that still read session_user
-    const cookieStore = await cookies();
-    cookieStore.set("session_user", JSON.stringify(sessionUser), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/", // ✅ MOST IMPORTANT
-      maxAge: 60 * 60 * 24 * 7, // 7 days
+      retailerId: sessionUser.retailerId ?? null,
     });
 
     return NextResponse.json({ ok: true, user: sessionUser });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Login failed";
-    return NextResponse.json(
-      { ok: false, error: "SERVER_ERROR", message: msg },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: "SERVER_ERROR", message: msg }, { status: 500 });
   }
 }

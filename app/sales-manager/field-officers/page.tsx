@@ -1,4 +1,4 @@
-// app/sales-manager/field-officers/page.tsx
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/sales-manager/field-officers/page.tsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -15,7 +15,6 @@ type Row = {
 
   retailersTotal: number;
   retailersActive: number;
-
   newRetailers: number;
 
   orders: number;
@@ -31,11 +30,12 @@ type Row = {
 
   // ✅ NEW
   thisMonthTarget: number;
-  thisMonthAch: number;
+  achievementThisMonth: number;
+  achievementPct: number | null;
 
+  // ✅ existing target edit
   nextMonthTarget: number | null;
-  nextMonthLocked: boolean;
-  nextMonthKey: string;
+  nextMonthLocked?: boolean;
 };
 
 function n(v: any) {
@@ -66,7 +66,6 @@ export default function SalesManagerFieldOfficersPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<string>("");
 
-  // ✅ modal
   const [modalOpen, setModalOpen] = useState(false);
   const [modalFo, setModalFo] = useState<{ foId: string; foName: string } | null>(null);
   const [modalMetric, setModalMetric] = useState<MetricKey>("ORDERS");
@@ -107,7 +106,6 @@ export default function SalesManagerFieldOfficersPage() {
 
           retailersTotal: n(x.retailersTotal),
           retailersActive: n(x.retailersActive),
-
           newRetailers: n(x.newRetailers),
 
           orders: n(x.orders),
@@ -121,13 +119,14 @@ export default function SalesManagerFieldOfficersPage() {
 
           convPct: n(x.convPct),
 
-          // ✅ NEW
+          // ✅ new
           thisMonthTarget: n(x.thisMonthTarget),
-          thisMonthAch: n(x.thisMonthAch),
+          achievementThisMonth: n(x.achievementThisMonth),
+          achievementPct: x.achievementPct == null ? null : n(x.achievementPct),
 
+          // ✅ next month editable
           nextMonthTarget: x.nextMonthTarget == null ? null : n(x.nextMonthTarget),
           nextMonthLocked: !!x.nextMonthLocked,
-          nextMonthKey: String(x.nextMonthKey || ""),
         }))
       );
     } catch (e: any) {
@@ -164,18 +163,21 @@ export default function SalesManagerFieldOfficersPage() {
         )}
 
         {!!error && (
-          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div>
+          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-700">
+            {error}
+          </div>
         )}
 
         <div className="mt-4 w-full overflow-hidden rounded-2xl border border-black/10 bg-white">
           <div className="overflow-x-auto">
-            <table className="min-w-[1450px] w-full text-left">
+            <table className="min-w-[1500px] w-full text-left">
               <thead className="bg-gray-50">
                 <tr className="text-[12px] font-extrabold text-black/70">
                   <th className="px-3 py-3">Field Officer</th>
                   <th className="px-3 py-3">Dist</th>
                   <th className="px-3 py-3">Retailers</th>
                   <th className="px-3 py-3">New Retailers</th>
+
                   <th className="px-3 py-3">Orders</th>
                   <th className="px-3 py-3">Sales</th>
                   <th className="px-3 py-3">AOV</th>
@@ -184,9 +186,10 @@ export default function SalesManagerFieldOfficersPage() {
                   <th className="px-3 py-3">Collection</th>
                   <th className="px-3 py-3">Conv%</th>
 
-                  {/* ✅ SAME ROW me NEW fields */}
+                  {/* ✅ SAME ROW fields (no card) */}
                   <th className="px-3 py-3">This Month Target</th>
                   <th className="px-3 py-3">This Month Ach.</th>
+
                   <th className="px-3 py-3">Next Month Target</th>
                 </tr>
               </thead>
@@ -256,24 +259,26 @@ export default function SalesManagerFieldOfficersPage() {
                         <CellButton onClick={() => openMetric(r, "CONV")}>{r.convPct}%</CellButton>
                       </td>
 
-                      {/* ✅ this month target */}
+                      {/* ✅ This Month target */}
                       <td className="px-3 py-3 text-sm font-extrabold">
                         {r.thisMonthTarget > 0 ? `₹${inr(r.thisMonthTarget)}` : "—"}
                       </td>
 
-                      {/* ✅ this month achievement */}
-                      <td className="px-3 py-3 text-sm font-extrabold">
-                        ₹{inr(r.thisMonthAch)}
+                      {/* ✅ This Month achievement */}
+                      <td className="px-3 py-3 text-sm">
+                        <div className="font-extrabold">₹{inr(r.achievementThisMonth)}</div>
+                        <div className="text-[11px] font-bold text-black/50">
+                          {r.achievementPct == null ? "—" : `${r.achievementPct}%`}
+                        </div>
                       </td>
 
-                      {/* ✅ next month editable target */}
+                      {/* ✅ Next Month Target editable cell */}
                       <td className="px-3 py-3">
                         <TargetCell
                           foId={r.foId}
-                          monthKey={r.nextMonthKey}
                           initialValue={r.nextMonthTarget}
-                          locked={r.nextMonthLocked}
                           thisMonthTarget={r.thisMonthTarget}
+                          locked={!!r.nextMonthLocked}
                         />
                       </td>
                     </tr>
@@ -284,7 +289,7 @@ export default function SalesManagerFieldOfficersPage() {
           </div>
 
           <div className="border-t border-black/5 px-3 py-2 text-[11px] text-black/50">
-            Rule: Next target ≥ This month target. Next Month Target save hone ke baad lock ho jayega.
+            Note: Next Month Target save hone ke baad lock ho jayega. (Rule: Next target ≥ This month target)
           </div>
         </div>
       </div>

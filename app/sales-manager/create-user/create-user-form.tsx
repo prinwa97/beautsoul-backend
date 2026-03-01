@@ -76,6 +76,41 @@ export default function CreateUserForm({
     });
   }
 
+  function extractSuccessDetails(data: any, role: RoleKey, fallbackPhone: string) {
+    const title =
+      role === "DISTRIBUTOR" ? "Distributor created!" : role === "RETAILER" ? "Retailer created!" : "Field Officer created!";
+
+    // Try common variants in your APIs; fallback to "-"
+    const code =
+      data?.distributorCode ??
+      data?.retailerCode ??
+      data?.fieldOfficerCode ??
+      data?.code ??
+      data?.userCode ??
+      data?.user?.code ??
+      data?.user?.username ??
+      "-";
+
+    const loginPhone =
+      data?.loginPhone ??
+      data?.phone ??
+      data?.user?.phone ??
+      data?.user?.mobile ??
+      fallbackPhone ??
+      "-";
+
+    const createdId =
+      data?.id ??
+      data?.userId ??
+      data?.user?.id ??
+      data?.retailer?.id ??
+      data?.distributor?.id ??
+      data?.fieldOfficer?.id ??
+      "-";
+
+    return { title, code, loginPhone, createdId };
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
@@ -128,21 +163,22 @@ export default function CreateUserForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        // ✅ safer for auth cookies in some setups (localhost vs IP etc.)
+        credentials: "include",
       });
 
       const data = await res.json().catch(() => null);
+
+      // ✅ Debug response shape if needed
+      // console.log("CREATE USER RESP:", data);
+
       if (!res.ok || !data?.ok) {
         setErr(String(data?.error || data?.message || "Create failed"));
         return;
       }
 
-      if (role === "DISTRIBUTOR") {
-        alert(`Distributor created!\nCode: ${data.distributorCode}\nLogin Phone: ${data.loginPhone}`);
-      } else if (role === "RETAILER") {
-        alert(`Retailer created!\nCode: ${data.retailerCode}\nLogin Phone: ${data.loginPhone}`);
-      } else {
-        alert(`Field Officer created!\nCode: ${data.fieldOfficerCode}\nLogin Phone: ${data.loginPhone}`);
-      }
+      const { title, code, loginPhone, createdId } = extractSuccessDetails(data, role, ph);
+      alert(`${title}\nID: ${createdId}\nCode: ${code}\nLogin Phone: ${loginPhone}`);
 
       resetForm();
       if (role === "DISTRIBUTOR") setDistId("");
@@ -187,11 +223,6 @@ export default function CreateUserForm({
 
           <div className={showDistributorPicker ? "" : "opacity-50"}>
             <label className="text-xs font-semibold text-gray-700">Distributor</label>
-
-            {/* DEBUG (enable if needed) */}
-            {/* <div className="text-[11px] text-gray-500 mt-1">
-              debug → role:{role} | show:{String(showDistributorPicker)} | distsLoading:{String(distsLoading)} | dists:{dists.length} | distId:{distId || "-"}
-            </div> */}
 
             <select
               value={distId}

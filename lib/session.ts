@@ -1,19 +1,19 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/lib/session.ts
 import "server-only";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
-// ✅ New secure cookie (signed)
+// ✅ Single source of truth cookie (signed)
 const COOKIE_NAME = "bs_session";
 
-// ✅ Legacy cookie (plain JSON url-encoded) - currently set by your login route
-const LEGACY_COOKIE_NAME = "session_user";
-
+// ✅ MUST be set in production (never keep dev default in prod)
 const SECRET = process.env.SESSION_SECRET || "dev_secret_change_me";
 
 export type SessionPayload = {
   userId: string;
   role: string;
   distributorId?: string | null;
+  retailerId?: string | null;
 };
 
 function sign(data: string) {
@@ -27,22 +27,6 @@ function encodeSigned(payload: SessionPayload) {
   return `${b64}.${sig}`;
 }
 
-// ✅ Writes signed cookie (recommended)
-export async function writeSession(payload: SessionPayload) {
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, encodeSigned(payload), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7,
-  });
-}
-
-// -------------------------
-// Reading helpers
-// -------------------------
-
 async function readSignedSession(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
   const raw = cookieStore.get(COOKIE_NAME)?.value;
@@ -50,6 +34,8 @@ async function readSignedSession(): Promise<SessionPayload | null> {
 
   const [b64, sig] = raw.split(".");
   if (!b64 || !sig) return null;
+
+  // signature verify
   if (sign(b64) !== sig) return null;
 
   try {
@@ -58,7 +44,9 @@ async function readSignedSession(): Promise<SessionPayload | null> {
 
     const userId = parsed?.userId;
     const role = parsed?.role;
+
     const distributorId = parsed?.distributorId ?? null;
+    const retailerId = parsed?.retailerId ?? null;
 
     if (!userId || !role) return null;
 
@@ -66,32 +54,7 @@ async function readSignedSession(): Promise<SessionPayload | null> {
       userId: String(userId),
       role: String(role),
       distributorId: distributorId ? String(distributorId) : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// ✅ Reads legacy cookie: session_user=<urlencoded JSON>
-async function readLegacySession(): Promise<SessionPayload | null> {
-  const cookieStore = await cookies();
-  const raw = cookieStore.get(LEGACY_COOKIE_NAME)?.value;
-  if (!raw) return null;
-
-  try {
-    const decoded = decodeURIComponent(raw);
-    const parsed = JSON.parse(decoded);
-
-    const userId = parsed?.userId || parsed?.id;
-    const role = parsed?.role;
-    const distributorId = parsed?.distributorId ?? null;
-
-    if (!userId || !role) return null;
-
-    return {
-      userId: String(userId),
-      role: String(role),
-      distributorId: distributorId ? String(distributorId) : null,
+      retailerId: retailerId ? String(retailerId) : null,
     };
   } catch {
     return null;
@@ -99,35 +62,31 @@ async function readLegacySession(): Promise<SessionPayload | null> {
 }
 
 /**
- * ✅ Main reader:
- * 1) Try signed cookie (bs_session)
- * 2) fallback to legacy cookie (session_user)
- *    + ✅ migrate legacy → signed cookie
+ * ✅ Read session (SIGNED ONLY)
  */
 export async function readSession(): Promise<SessionPayload | null> {
-  const signed = await readSignedSession();
-  if (signed) return signed;
+  return await readSignedSession();
+}
 
-  const legacy = await readLegacySession();
-  if (!legacy) return null;
-
-  // ✅ migrate to signed cookie (so everything becomes consistent)
+/**
+ * ✅ Write signed session cookie
+ */
+export async function writeSession(payload: SessionPayload) {
   const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, encodeSigned(legacy), {
+  cookieStore.set(COOKIE_NAME, encodeSigned(payload), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: 60 * 60 * 24 * 7, // 7 days
   });
-
-  return legacy;
 }
 
 export async function getSessionUser(): Promise<{
   id: string;
   role: string;
   distributorId?: string | null;
+  retailerId?: string | null;
 } | null> {
   const s = await readSession();
   if (!s?.userId || !s?.role) return null;
@@ -136,6 +95,7 @@ export async function getSessionUser(): Promise<{
     id: s.userId,
     role: s.role,
     distributorId: s.distributorId ?? null,
+    retailerId: s.retailerId ?? null,
   };
 }
 
@@ -153,15 +113,14 @@ export async function requireDistributorId() {
 }
 
 /**
- * ✅ Generic role guard (utility)
- * - If allowedRoles is omitted/empty => only checks login
- * - Returns {ok:false,...} instead of throwing (API routes friendly)
+ * ✅ Generic role guard (API routes friendly)
  */
 type RoleAuthOk = {
   ok: true;
   userId: string;
   role: string;
   distributorId?: string | null;
+  retailerId?: string | null;
 };
 type RoleAuthFail = { ok: false; error: string; status: number };
 
@@ -181,17 +140,14 @@ export async function requireRole(allowedRoles?: string[]): Promise<RoleAuthOk |
     userId: u.id,
     role,
     distributorId: u.distributorId ?? null,
+    retailerId: u.retailerId ?? null,
   };
 }
 
 /**
- * ✅ Warehouse guard (fix for your TS error)
- * Now it ACCEPTS optional roles, so:
- *   requireWarehouse(["WAREHOUSE_MANAGER","ADMIN"])
- * works perfectly.
- *
- * If you call requireWarehouse() without args,
- * it defaults to ["WAREHOUSE_MANAGER","ADMIN"].
+ * ✅ Warehouse guard
+ * - Works with: requireWarehouse(["WAREHOUSE_MANAGER","ADMIN"])
+ * - Defaults to ["WAREHOUSE_MANAGER","ADMIN"]
  */
 export async function requireWarehouse(
   allowedRoles: string[] = ["WAREHOUSE_MANAGER", "ADMIN"]
@@ -199,9 +155,10 @@ export async function requireWarehouse(
   return requireRole(allowedRoles);
 }
 
-// ✅ Clear both cookies (new + legacy)
+/**
+ * ✅ Clear session cookie
+ */
 export async function clearSession() {
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
-  cookieStore.delete(LEGACY_COOKIE_NAME);
 }

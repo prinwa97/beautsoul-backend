@@ -42,7 +42,7 @@ export default function LoginPage() {
 if (role === "ADMIN") router.replace("/admin/products");
 else if (role === "WAREHOUSE_MANAGER") router.replace("/warehouse/dashboard");
 else if (role === "DISTRIBUTOR") router.replace("/distributor/dashboard");
-else if (role === "SALES_MANAGER") router.replace("/sales-manager");
+else if (role === "SALES_MANAGER") router.replace("/sales-manager/dashboard");
 else if (role === "STATE_BUSINESS_HEAD") router.replace("/state-head");
 else if (role === "FIELD_OFFICER") router.replace("/field-officer/orders");
 else if (role === "RETAILER") router.replace("/retailer");

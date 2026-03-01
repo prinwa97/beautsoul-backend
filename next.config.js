@@ -2,21 +2,12 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // ✅ Fix: silence turbopack migration warning
-  turbopack: {},
-
-  // ✅ Stable builds
+  // NOTE: Next.js 16+ me `eslint` key next.config.js me valid nahi hai.
+  // Lint ko alag se `npm run lint` se run karo (CI / local).
   reactStrictMode: true,
 
-  // ⭐ IMPORTANT — build fail stop karega
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-
-  // webpack hook (safe)
-  webpack: (config) => {
-    return config;
-  },
+  // optional: if you still want a no-op webpack hook
+  webpack: (config) => config,
 };
 
 module.exports = nextConfig;
