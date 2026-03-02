@@ -1,3 +1,5 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/field-officer/home/summary/route.ts
+
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
@@ -23,16 +25,19 @@ function daysBetween(now: Date, past: Date) {
 export async function GET() {
   try {
     const u: any = await getSessionUser();
-    if (!u) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!u) return NextResponse.json({ ok: false, error: "UNAUTHORIZED" }, { status: 401 });
 
     const role = String(u.role || "").toUpperCase();
     if (role !== "FIELD_OFFICER") {
-      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+      return NextResponse.json({ ok: false, error: "FORBIDDEN" }, { status: 403 });
     }
 
-    const foUserId = String(u.id || "");
-    const distributorId = u.distributorId ? String(u.distributorId) : null;
+    const foUserId = String(u.id || "").trim();
+    const distributorId = u.distributorId ? String(u.distributorId).trim() : "";
 
+    if (!foUserId) {
+      return NextResponse.json({ ok: false, error: "Missing user id in session" }, { status: 400 });
+    }
     if (!distributorId) {
       return NextResponse.json({ ok: false, error: "Missing distributorId in session" }, { status: 400 });
     }
@@ -42,29 +47,45 @@ export async function GET() {
     const monthStart = startOfMonth(now);
 
     const retailers = await prisma.retailer.findMany({
-      where: { distributorId },
+      where: { distributorId } as any,
       select: { id: true, name: true, city: true },
       orderBy: { name: "asc" },
     });
 
     const retailerIds = retailers.map((r) => r.id);
 
-    /* ---------------- TARGET ---------------- */
+    /* ---------------- TARGET (✅ FIXED) ----------------
+       Sales Manager saves target in `fieldOfficerTarget` table:
+       prisma.fieldOfficerTarget.upsert({ where: { foUserId_monthKey: ... } })
+       So FO summary must read from the same table.
+    */
     let targetAmount = 0;
 
     const targetsEnabled = process.env.FO_TARGETS_ENABLED === "1";
-    if (targetsEnabled && foUserId) {
-      // enable only after DB migration creates SalesTarget table
-      const targetRow = await prisma.salesTarget.findUnique({
-        where: { month_fieldOfficerId: { month: monthKey, fieldOfficerId: foUserId } },
-        select: { targetAmount: true },
+    if (targetsEnabled) {
+      const t = await prisma.fieldOfficerTarget.findUnique({
+        where: { foUserId_monthKey: { foUserId, monthKey } } as any,
+        select: { targetValue: true, locked: true },
       });
-      targetAmount = Number(targetRow?.targetAmount || 0);
+
+      targetAmount = Number(t?.targetValue || 0);
+
+      // Optional backward-compatible fallback (if old SalesTarget table exists in some envs)
+      if (targetAmount <= 0) {
+        try {
+          const old: any = await (prisma as any).salesTarget?.findUnique?.({
+            where: { month_fieldOfficerId: { month: monthKey, fieldOfficerId: foUserId } },
+            select: { targetAmount: true },
+          });
+          targetAmount = Number(old?.targetAmount || 0);
+        } catch {
+          // ignore (table may not exist)
+        }
+      }
     }
 
     /* ---------------- ACHIEVED ----------------
-       ✅ Fix: Count all "active" order statuses (not only DELIVERED)
-       so Achieved will show even if dispatch/delivered not done yet.
+       Count all active statuses so achieved shows even if dispatch/delivered not done yet.
     */
     let achievedAmount = 0;
     if (retailerIds.length) {
@@ -73,9 +94,7 @@ export async function GET() {
           distributorId,
           retailerId: { in: retailerIds },
           createdAt: { gte: monthStart, lte: now },
-          status: {
-            in: ["SUBMITTED", "CONFIRMED", "DISPATCHED", "DELIVERED"] as any,
-          },
+          status: { in: ["SUBMITTED", "CONFIRMED", "DISPATCHED", "DELIVERED"] as any },
         } as any,
         _sum: { totalAmount: true },
       });
@@ -89,7 +108,7 @@ export async function GET() {
     let ordersTop10: any[] = [];
     if (retailerIds.length) {
       const orders = await prisma.order.findMany({
-        where: { distributorId, retailerId: { in: retailerIds } },
+        where: { distributorId, retailerId: { in: retailerIds } } as any,
         select: { retailerId: true, createdAt: true },
         orderBy: { createdAt: "desc" },
       });
@@ -113,7 +132,7 @@ export async function GET() {
     let paymentsTop10: any[] = [];
     if (retailerIds.length) {
       const ledger = await prisma.retailerLedger.findMany({
-        where: { distributorId, retailerId: { in: retailerIds } },
+        where: { distributorId, retailerId: { in: retailerIds } } as any,
         select: { retailerId: true, type: true, amount: true, date: true },
         orderBy: { date: "desc" },
       });

@@ -1,3 +1,5 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/sales-manager/user/create-retailer/route.ts
+
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
@@ -83,6 +85,7 @@ export async function POST(request: Request) {
     }
 
     // ✅ Require location: pincode OR manual city+state
+    // (keep your original behavior; this effectively requires city+state always)
     if ((!pincode || !city || !state) && (!city || !state)) {
       return NextResponse.json(
         { ok: false, error: "Pincode required OR (city and state required)" },
@@ -115,7 +118,18 @@ export async function POST(request: Request) {
           address: address || null,
           pincode: pincode || null,
         } as any,
-        select: { id: true, phone: true, code: true },
+        select: {
+          id: true,
+          code: true,
+          phone: true,
+          name: true,
+          distributorId: true,
+          city: true,
+          district: true,
+          state: true,
+          pincode: true,
+          address: true,
+        },
       });
 
       // 2) Create RETAILER
@@ -134,13 +148,40 @@ export async function POST(request: Request) {
           createdByRole: me.role,
           createdById: me.id,
         } as any,
-        select: { id: true },
+        select: {
+          id: true,
+          userId: true,
+          distributorId: true,
+          name: true,
+          phone: true,
+          gst: true,
+          address: true,
+          city: true,
+          district: true, // ✅ now returns
+          state: true,
+          pincode: true,
+          status: true,
+          createdAt: true,
+        },
       });
 
-      return { retailerId: retailer.id, retailerCode: user.code, userId: user.id, loginPhone: user.phone };
+      return { user, retailer };
     });
 
-    return NextResponse.json({ ok: true, ...result, auto: { pincode, city, district, state } });
+    return NextResponse.json({
+      ok: true,
+      retailerId: result.retailer.id,
+      userId: result.user.id,
+      retailerCode: result.user.code,
+      loginPhone: result.user.phone,
+
+      // ✅ these two make UI binding easy
+      retailer: result.retailer,
+      user: result.user,
+
+      // ✅ keep your old auto object too
+      auto: { pincode, city, district, state },
+    });
   } catch (e: any) {
     if (String(e?.code) === "P2002") {
       return NextResponse.json({ ok: false, error: "DUPLICATE", message: "Duplicate unique value" }, { status: 409 });

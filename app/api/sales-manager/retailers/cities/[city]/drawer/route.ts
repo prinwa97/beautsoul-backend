@@ -1,4 +1,3 @@
-// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/sales-manager/retailers/cities/[city]/drawer/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
@@ -9,6 +8,7 @@ export const dynamic = "force-dynamic";
 function json(ok: boolean, data: any, status = 200) {
   return NextResponse.json({ ok, ...data }, { status });
 }
+
 function cleanStr(v: any) {
   const s = String(v ?? "").trim();
   return s.length ? s : "";
@@ -32,12 +32,33 @@ function parseYMD(v: any) {
   if (!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
   return new Date(Date.UTC(y, mo - 1, d, 0, 0, 0));
 }
-function startOfMonthUTC(d: Date) {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0));
+
+// IST helpers (stable across server timezones)
+function startOfDayIST(d = new Date()) {
+  const x = new Date(d);
+  const ist = new Date(x.getTime() + 330 * 60 * 1000);
+  const y = ist.getUTCFullYear();
+  const m = ist.getUTCMonth();
+  const day = ist.getUTCDate();
+  const utc = new Date(Date.UTC(y, m, day, 0, 0, 0));
+  return new Date(utc.getTime() - 330 * 60 * 1000);
 }
-function startOfYearUTC(d: Date) {
-  return new Date(Date.UTC(d.getUTCFullYear(), 0, 1, 0, 0, 0));
+function startOfMonthIST(d = new Date()) {
+  const x = new Date(d);
+  const ist = new Date(x.getTime() + 330 * 60 * 1000);
+  const y = ist.getUTCFullYear();
+  const m = ist.getUTCMonth();
+  const utc = new Date(Date.UTC(y, m, 1, 0, 0, 0));
+  return new Date(utc.getTime() - 330 * 60 * 1000);
 }
+function startOfYearIST(d = new Date()) {
+  const x = new Date(d);
+  const ist = new Date(x.getTime() + 330 * 60 * 1000);
+  const y = ist.getUTCFullYear();
+  const utc = new Date(Date.UTC(y, 0, 1, 0, 0, 0));
+  return new Date(utc.getTime() - 330 * 60 * 1000);
+}
+
 function pctChange(curr: number, prev: number) {
   if (!prev) return curr ? 100 : 0;
   return ((curr - prev) / prev) * 100;
@@ -59,17 +80,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
     const mode = asMode(url.searchParams.get("mode"));
     const distId = cleanStr(url.searchParams.get("distId"));
 
-    const now = new Date();
     let from: Date;
     let to: Date;
 
     if (mode === "TODAY") {
-      const d0 = new Date();
-      d0.setHours(0, 0, 0, 0);
-      from = d0;
-      to = new Date(d0.getTime() + 24 * 60 * 60 * 1000);
+      from = startOfDayIST(new Date());
+      to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
     } else if (mode === "YEAR") {
-      from = startOfYearUTC(new Date());
+      from = startOfYearIST(new Date());
       to = new Date();
     } else if (mode === "CUSTOM") {
       const f = parseYMD(url.searchParams.get("from"));
@@ -78,7 +96,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
       from = f;
       to = new Date(t.getTime() + 24 * 60 * 60 * 1000);
     } else {
-      from = startOfMonthUTC(new Date());
+      from = startOfMonthIST(new Date());
       to = new Date();
     }
 
@@ -86,13 +104,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
     const prevFrom = new Date(from.getTime() - spanMs);
     const prevTo = new Date(from.getTime());
 
+    // ✅ tolerant city match (contains + insensitive)
+    const retailerCityFilter = { contains: cityName, mode: "insensitive" as const };
+
     const whereOrder: any = {
       createdAt: { gte: from, lt: to },
-      retailer: { city: cityName },
+      retailer: { city: retailerCityFilter },
     };
     const wherePrev: any = {
       createdAt: { gte: prevFrom, lt: prevTo },
-      retailer: { city: cityName },
+      retailer: { city: retailerCityFilter },
     };
 
     if (distId) {
@@ -121,14 +142,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
         take: TAKE,
       }),
       prisma.retailer.count({
-        where: { city: cityName, ...(distId ? { distributorId: distId } : {}) },
+        where: {
+          ...(distId ? { distributorId: distId } : {}),
+          city: retailerCityFilter,
+        },
       }),
     ]);
 
     let sales = 0;
     let prevSales = 0;
 
-    const byRetailer = new Map<string, { retailerId: string; retailerName: string; sales: number; ordersSet: Set<string> }>();
+    const byRetailer = new Map<
+      string,
+      { retailerId: string; retailerName: string; sales: number; ordersSet: Set<string> }
+    >();
     const byProduct = new Map<string, { productName: string; sales: number; ordersSet: Set<string> }>();
 
     for (const o of orders) {
@@ -138,7 +165,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
       const orderSales = (o.items || []).reduce((s, it) => s + num(it.amount), 0);
       sales += orderSales;
 
-      const rr = byRetailer.get(rid) || { retailerId: rid, retailerName: rname, sales: 0, ordersSet: new Set<string>() };
+      const rr =
+        byRetailer.get(rid) || { retailerId: rid, retailerName: rname, sales: 0, ordersSet: new Set<string>() };
       rr.sales += orderSales;
       rr.ordersSet.add(String(o.id));
       rr.retailerName = rname;
@@ -158,7 +186,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
     }
 
     const topRetailers = Array.from(byRetailer.values())
-      .map((r) => ({ retailerId: r.retailerId, retailerName: r.retailerName, sales: Math.round(r.sales), orders: r.ordersSet.size }))
+      .map((r) => ({
+        retailerId: r.retailerId,
+        retailerName: r.retailerName,
+        sales: Math.round(r.sales),
+        orders: r.ordersSet.size,
+      }))
       .sort((a, b) => b.sales - a.sales)
       .slice(0, 10);
 
@@ -174,9 +207,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
       .sort((a, b) => a.sales - b.sales)
       .slice(0, 8);
 
-    // simple plan
     const cityPlan = [
-      { title: "Reactivate inactive retailers", targets: Math.min(5, Math.max(0, retailerCount - topRetailers.length)) },
+      { title: "Reactivate inactive retailers", targets: Math.min(5, Math.max(0, retailerCount - byRetailer.size)) },
       { title: "Upsell top 2 products in top retailers", targets: Math.min(5, topRetailers.length) },
       { title: "Revive 1 slow mover SKU with bundling", targets: 1 },
     ];
@@ -190,7 +222,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ city: string }>
       kpis: {
         orders: orders.length,
         sales: Math.round(sales),
-        activeRetailers: topRetailers.length,
+        // ✅ correct active retailers count
+        activeRetailers: byRetailer.size,
         totalRetailers: retailerCount,
         growthPct: Number(pctChange(sales, prevSales).toFixed(2)),
       },

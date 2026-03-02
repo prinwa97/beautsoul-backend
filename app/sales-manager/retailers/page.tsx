@@ -1603,19 +1603,26 @@ export default function SMRetailersAnalyticsPage() {
         to={to}
       />
       <ProductDrawer
-        productName={productName}
-        open={productOpen}
-        onClose={() => setProductOpen(false)}
-        onOpenRetailer={openRetailer}
-        onOpenCity={openCity}
-      />
-      <CityDrawer
-        city={cityName}
-        open={cityOpen}
-        onClose={() => setCityOpen(false)}
-        onOpenRetailer={openRetailer}
-        onOpenProduct={openProduct}
-      />
+  productName={productName}
+  open={productOpen}
+  onClose={() => setProductOpen(false)}
+  onOpenRetailer={openRetailer}
+  onOpenCity={openCity}
+  mode={mode}
+  from={from}
+  to={to}
+/>
+
+<CityDrawer
+  city={cityName}
+  open={cityOpen}
+  onClose={() => setCityOpen(false)}
+  onOpenRetailer={openRetailer}
+  onOpenProduct={openProduct}
+  mode={mode}
+  from={from}
+  to={to}
+/>
     </div>
   );
 }

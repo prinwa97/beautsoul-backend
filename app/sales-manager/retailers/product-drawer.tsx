@@ -1,7 +1,11 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/sales-manager/retailers/product-drawer.tsx
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ModalShell from "./modal-shell";
+
+type Mode = "TODAY" | "MONTH" | "YEAR" | "CUSTOM";
 
 type OrderRow = {
   id: string;
@@ -23,6 +27,9 @@ type Resp = {
   ok: boolean;
   error?: string;
   product?: { name: string };
+  mode?: Mode;
+  range?: { from: string; to: string };
+
   kpis?: { orders: number; qty: number; sales: number; repeatRetailers: number; growthPct: number };
 
   topRetailers?: Array<{
@@ -31,7 +38,7 @@ type Resp = {
     city: string;
     sales: number;
     orders: number;
-    lastAuditAt?: string | null; // ✅ NEW
+    lastAuditAt?: string | null;
   }>;
 
   topCities?: Array<{ city: string; sales: number; orders: number }>;
@@ -57,12 +64,21 @@ export default function ProductDrawer({
   onClose,
   onOpenRetailer,
   onOpenCity,
+
+  // ✅ NEW: single source of truth from parent
+  mode,
+  from,
+  to,
 }: {
   productName: string;
   open: boolean;
   onClose: () => void;
   onOpenRetailer: (retailerId: string) => void;
   onOpenCity: (city: string) => void;
+
+  mode: Mode;
+  from: string;
+  to: string;
 }) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<Resp | null>(null);
@@ -96,8 +112,14 @@ export default function ProductDrawer({
 
   const api = useMemo(() => {
     if (!productName) return "";
-    return `/api/sales-manager/retailers/products/${encodeURIComponent(productName)}/drawer?mode=MONTH`;
-  }, [productName]);
+    const p = new URLSearchParams();
+    p.set("mode", mode);
+    if (mode === "CUSTOM") {
+      p.set("from", from);
+      p.set("to", to);
+    }
+    return `/api/sales-manager/retailers/products/${encodeURIComponent(productName)}/drawer?${p.toString()}`;
+  }, [productName, mode, from, to]);
 
   useEffect(() => {
     if (!open || !api) return;
@@ -116,11 +138,11 @@ export default function ProductDrawer({
     })();
   }, [open, api]);
 
-  // ✅ main modal scroll top on open/product change
+  // ✅ scroll top on open/product/mode change (deps fixed)
   useEffect(() => {
     if (!open) return;
     bodyRef.current?.scrollTo({ top: 0, behavior: "auto" });
-  }, [open, productName]);
+  }, [open, productName, mode, from, to]);
 
   // ✅ nested modals scroll top
   useEffect(() => {
@@ -148,10 +170,9 @@ export default function ProductDrawer({
 
   if (!open) return null;
 
-  const p = data?.product?.name || productName;
+  const pName = data?.product?.name || productName;
   const k = data?.kpis;
 
-  // ✅ Orders open
   async function openOrders(retailerId: string, retailerName: string) {
     setOrdersRetailer({ id: retailerId, name: retailerName });
     setOrdersOpen(true);
@@ -159,7 +180,7 @@ export default function ProductDrawer({
     setOrdersData(null);
     try {
       const url = `/api/sales-manager/retailers/${encodeURIComponent(retailerId)}/orders?productName=${encodeURIComponent(
-        p
+        pName
       )}&limit=60`;
       const res = await fetch(url, { cache: "no-store" });
       const j = await res.json().catch(() => null);
@@ -171,7 +192,6 @@ export default function ProductDrawer({
     }
   }
 
-  // ✅ Order detail open
   async function openOrder(oid: string) {
     setOrderId(oid);
     setOrderOpen(true);
@@ -189,7 +209,6 @@ export default function ProductDrawer({
     }
   }
 
-  // ✅ Audit open
   async function openAudit(retailerId: string, retailerName: string) {
     setAuditRetailer({ id: retailerId, name: retailerName });
     setAuditOpen(true);
@@ -197,7 +216,7 @@ export default function ProductDrawer({
     setAuditData(null);
     try {
       const url = `/api/sales-manager/retailers/${encodeURIComponent(retailerId)}/audit/latest?productName=${encodeURIComponent(
-        p
+        pName
       )}`;
       const res = await fetch(url, { cache: "no-store" });
       const j = await res.json().catch(() => null);
@@ -220,10 +239,21 @@ export default function ProductDrawer({
         titleTop={
           <div className="min-w-0">
             <div className="text-xs font-semibold text-gray-500">Product</div>
-            <div className="text-lg font-black text-gray-900 truncate">{p}</div>
+            <div className="text-lg font-black text-gray-900 truncate">{pName}</div>
+
             <div className="text-xs text-gray-600 mt-1">
               Orders: <b>{k?.orders ?? 0}</b> · Sales: <b>₹{money(k?.sales ?? 0)}</b> · Qty: <b>{k?.qty ?? 0}</b> · Growth:{" "}
               <b>{Number(k?.growthPct ?? 0).toFixed(1)}%</b>
+            </div>
+
+            <div className="mt-1 text-[11px] text-gray-500">
+              Mode: <b>{mode}</b>
+              {mode === "CUSTOM" ? (
+                <>
+                  {" "}
+                  · Range: <b>{from}</b> → <b>{to}</b>
+                </>
+              ) : null}
             </div>
           </div>
         }
@@ -257,11 +287,9 @@ export default function ProductDrawer({
                           <TD className="font-bold underline underline-offset-2 cursor-pointer" onClick={() => onOpenRetailer(r.retailerId)}>
                             {r.retailerName}
                           </TD>
-
                           <TD>{r.city || "—"}</TD>
                           <TD className="text-right font-black">₹{money(r.sales)}</TD>
 
-                          {/* ✅ Orders click -> Orders modal */}
                           <TD className="text-right">
                             <button
                               className="px-2 py-1 rounded-xl border bg-white text-xs font-black hover:bg-gray-50"
@@ -272,7 +300,6 @@ export default function ProductDrawer({
                             </button>
                           </TD>
 
-                          {/* ✅ Audit click -> Audit modal */}
                           <TD>
                             <button
                               className="px-2 py-1 rounded-xl border bg-white text-xs font-black hover:bg-gray-50"
@@ -294,7 +321,7 @@ export default function ProductDrawer({
                       {!(data.topRetailers || []).length ? (
                         <tr className="border-t">
                           <TD colSpan={6} className="text-center text-gray-600 py-6">
-                            No data.
+                            No data for {mode}.
                           </TD>
                         </tr>
                       ) : null}
@@ -319,7 +346,7 @@ export default function ProductDrawer({
                       </div>
                     </div>
                   ))}
-                  {!(data.topCities || []).length ? <div className="text-sm text-gray-600">No cities.</div> : null}
+                  {!(data.topCities || []).length ? <div className="text-sm text-gray-600">No cities for {mode}.</div> : null}
                 </div>
               </Block>
 
@@ -339,7 +366,7 @@ export default function ProductDrawer({
                       <div className="text-xs text-gray-600 mt-1">{r.reason}</div>
                     </div>
                   ))}
-                  {!(data.adoptionGap || []).length ? <div className="text-sm text-gray-600">No adoption gap list.</div> : null}
+                  {!(data.adoptionGap || []).length ? <div className="text-sm text-gray-600">No adoption gap list for {mode}.</div> : null}
                 </div>
               </Block>
 
@@ -352,7 +379,7 @@ export default function ProductDrawer({
                       <div className="text-xs text-gray-600 mt-1">Co-sales: ₹{money(x.coSales)}</div>
                     </div>
                   ))}
-                  {!(data.bundlePairs || []).length ? <div className="text-sm text-gray-600">No pairs.</div> : null}
+                  {!(data.bundlePairs || []).length ? <div className="text-sm text-gray-600">No pairs for {mode}.</div> : null}
                 </div>
               </Block>
             </>
@@ -370,7 +397,7 @@ export default function ProductDrawer({
           <div>
             <div className="text-xs font-semibold text-gray-500">Orders</div>
             <div className="text-lg font-black text-gray-900">
-              {ordersRetailer?.name || "—"} <span className="text-xs text-gray-500">({p})</span>
+              {ordersRetailer?.name || "—"} <span className="text-xs text-gray-500">({pName})</span>
             </div>
             <div className="text-xs text-gray-600 mt-1">Orders list is product-filtered (this product items only).</div>
           </div>
@@ -501,7 +528,7 @@ export default function ProductDrawer({
           <div>
             <div className="text-xs font-semibold text-gray-500">Audit</div>
             <div className="text-lg font-black text-gray-900">
-              {auditRetailer?.name || "—"} <span className="text-xs text-gray-500">({p})</span>
+              {auditRetailer?.name || "—"} <span className="text-xs text-gray-500">({pName})</span>
             </div>
             <div className="text-xs text-gray-600 mt-1">
               Last audit: <b>{auditData?.lastAuditAt ? dt(auditData.lastAuditAt) : "—"}</b>
@@ -580,12 +607,7 @@ function TD({
   title?: string;
 }) {
   return (
-    <td
-      colSpan={colSpan}
-      className={["px-4 py-2 align-top text-[12px]", className].join(" ")}
-      onClick={onClick}
-      title={title}
-    >
+    <td colSpan={colSpan} className={["px-4 py-2 align-top text-[12px]", className].join(" ")} onClick={onClick} title={title}>
       {children}
     </td>
   );

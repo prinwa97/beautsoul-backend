@@ -4,14 +4,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ModalShell from "./modal-shell";
 
+type Mode = "TODAY" | "MONTH" | "YEAR" | "CUSTOM";
+
 type Resp = {
   ok: boolean;
   error?: string;
   city?: string;
+  mode?: Mode;
+  range?: { from: string; to: string };
+  filters?: { distId: string | null };
   kpis?: { orders: number; sales: number; activeRetailers: number; totalRetailers: number; growthPct: number };
   topRetailers?: Array<{ retailerId: string; retailerName: string; sales: number; orders: number }>;
   topProducts?: Array<{ productName: string; sales: number; orders: number }>;
-  // ❌ slowMovers removed
   cityPlan?: Array<{ title: string; targets: number }>;
 };
 
@@ -27,22 +31,36 @@ export default function CityDrawer({
   onClose,
   onOpenRetailer,
   onOpenProduct,
+
+  // ✅ NEW: single source of truth from parent
+  mode,
+  from,
+  to,
 }: {
   city: string;
   open: boolean;
   onClose: () => void;
   onOpenRetailer: (retailerId: string) => void;
   onOpenProduct: (productName: string) => void;
+
+  mode: Mode;
+  from: string;
+  to: string;
 }) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<Resp | null>(null);
-
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const api = useMemo(() => {
     if (!city) return "";
-    return `/api/sales-manager/retailers/cities/${encodeURIComponent(city)}/drawer?mode=MONTH`;
-  }, [city]);
+    const p = new URLSearchParams();
+    p.set("mode", mode);
+    if (mode === "CUSTOM") {
+      p.set("from", from);
+      p.set("to", to);
+    }
+    return `/api/sales-manager/retailers/cities/${encodeURIComponent(city)}/drawer?${p.toString()}`;
+  }, [city, mode, from, to]);
 
   useEffect(() => {
     if (!open || !api) return;
@@ -61,10 +79,11 @@ export default function CityDrawer({
     })();
   }, [open, api]);
 
+  // ✅ FIX: deps array constant (no conditional deps)
   useEffect(() => {
     if (!open) return;
     bodyRef.current?.scrollTo({ top: 0, behavior: "auto" });
-  }, [open, city]);
+  }, [open, city, mode, from, to]);
 
   useEffect(() => {
     if (!open) return;
@@ -100,12 +119,23 @@ export default function CityDrawer({
         <div className="min-w-0">
           <div className="text-xs font-semibold text-gray-500">City</div>
           <div className="text-lg font-black text-gray-900 truncate">{name}</div>
+
           <div className="text-xs text-gray-600 mt-1">
             Sales: <b>₹{money(k?.sales ?? 0)}</b> · Orders: <b>{k?.orders ?? 0}</b> · Growth:{" "}
             <b>{Number(k?.growthPct ?? 0).toFixed(1)}%</b>
           </div>
           <div className="text-xs text-gray-600 mt-1">
             Retailers: <b>{k?.activeRetailers ?? 0}</b> active / <b>{k?.totalRetailers ?? 0}</b> total
+          </div>
+
+          <div className="mt-1 text-[11px] text-gray-500">
+            Mode: <b>{mode}</b>
+            {mode === "CUSTOM" ? (
+              <>
+                {" "}
+                · Range: <b>{from}</b> → <b>{to}</b>
+              </>
+            ) : null}
           </div>
         </div>
       }
@@ -114,9 +144,7 @@ export default function CityDrawer({
         {loading ? <div className="text-sm text-gray-600">Loading…</div> : null}
 
         {!loading && data && !data.ok ? (
-          <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
-            Error: {data.error || "UNKNOWN"}
-          </div>
+          <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {data.error || "UNKNOWN"}</div>
         ) : null}
 
         {!loading && data?.ok ? (
@@ -148,7 +176,7 @@ export default function CityDrawer({
                     {!(data.topRetailers || []).length ? (
                       <tr>
                         <Td colSpan={4} className="text-gray-600">
-                          No retailers.
+                          No retailers for {mode}.
                         </Td>
                       </tr>
                     ) : null}
@@ -184,7 +212,7 @@ export default function CityDrawer({
                     {!(data.topProducts || []).length ? (
                       <tr>
                         <Td colSpan={4} className="text-gray-600">
-                          No products.
+                          No products for {mode}.
                         </Td>
                       </tr>
                     ) : null}
@@ -228,15 +256,7 @@ function Th({ className = "", children }: { className?: string; children: any })
   return <th className={`text-left px-3 py-2 font-bold text-gray-700 ${className}`}>{children}</th>;
 }
 
-function Td({
-  className = "",
-  children,
-  colSpan,
-}: {
-  className?: string;
-  children: any;
-  colSpan?: number;
-}) {
+function Td({ className = "", children, colSpan }: { className?: string; children: any; colSpan?: number }) {
   return (
     <td className={`px-3 py-2 align-top ${className}`} colSpan={colSpan}>
       {children}

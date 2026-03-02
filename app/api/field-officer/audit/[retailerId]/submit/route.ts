@@ -33,7 +33,10 @@ type CleanAuditItem = {
 };
 
 /* -------------------- handler -------------------- */
-export async function POST(req: Request, ctx: { params: Promise<{ retailerId: string }> }) {
+export async function POST(
+  req: Request,
+  ctx: { params: Promise<{ retailerId: string }> }
+) {
   try {
     // 1) auth
     const u: any = await getSessionUser();
@@ -60,7 +63,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
 
     // 4) normalize + validate (batch-wise)
     const clean: CleanAuditItem[] = itemsIn
-      .map((it): CleanAuditItem => {
+      .map((it: any): CleanAuditItem => {
         const productName = cleanStr(it?.productName);
         const batchNo = cleanStr(it?.batchNo) || "NA"; // keep string, never null
         const expiryDate = safeISODate(it?.expiryDate); // Date | null
@@ -72,7 +75,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
 
         return { productName, batchNo, expiryDate, systemQty, physicalQty };
       })
-      .filter((x): x is CleanAuditItem => Boolean(x.productName));
+      .filter((x: CleanAuditItem) => Boolean(x.productName));
 
     if (!clean.length) return NextResponse.json({ ok: false, error: "No valid items" }, { status: 400 });
 
@@ -101,13 +104,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
           retailerId: rid,
           auditDate: new Date(),
           items: {
-            create: clean.map((x) => ({
+            // ✅ typed callback to avoid "implicit any"
+            create: clean.map((x: CleanAuditItem) => ({
               productName: x.productName,
-              batchNo: x.batchNo || "NA", // store string (NA), don't null
+              batchNo: x.batchNo || "NA",
               expiryDate: x.expiryDate,
               systemQty: x.systemQty,
               physicalQty: x.physicalQty!, // validated above
               variance: x.physicalQty! - x.systemQty,
+              soldQty: Math.max(0, x.systemQty - x.physicalQty!), // ✅ NEW
             })),
           },
         } as any,
@@ -117,7 +122,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
       // (B) Current snapshot (truth = physical)
       for (const x of clean) {
         const truth = x.physicalQty ?? 0;
-        const batchNoDb = x.batchNo || "NA"; // keep string
+        const batchNoDb = x.batchNo || "NA";
 
         // since schema has NO @@unique, we can't use upsert with composite key
         const existing = await tx.retailerStockSnapshot.findFirst({
@@ -136,7 +141,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ retailerId: st
             where: { id: existing.id },
             data: {
               qty: truth,
-              // updatedAt auto @updatedAt
             } as any,
           });
         } else {

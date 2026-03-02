@@ -124,15 +124,23 @@ export async function POST(req: Request) {
           activatedByDistributorId: distributorId,
           activatedAt: new Date(),
         },
-        select: {
-          id: true,
-          userId: true,
-          distributorId: true,
-          name: true,
-          phone: true,
-          status: true,
-          createdAt: true,
-        },
+       select: {
+  id: true,
+  userId: true,
+  distributorId: true,
+  name: true,
+  phone: true,
+
+  address: true,
+  city: true,
+  district: true,  // ✅ ADD
+  state: true,
+  pincode: true,
+  gst: true,
+
+  status: true,
+  createdAt: true,
+},
       });
 
       return { user, retailer };

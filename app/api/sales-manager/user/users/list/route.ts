@@ -1,4 +1,5 @@
-// app/api/sales-manager/user/users/list/route.ts
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/sales-manager/user/users/list/route.ts
+
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
@@ -20,11 +21,10 @@ export async function GET(req: Request) {
     }
 
     const { searchParams } = new URL(req.url);
-    const role = String(searchParams.get("role") || "ALL").toUpperCase(); // ALL | RETAILER | DISTRIBUTOR | FIELD_OFFICER
+    const role = String(searchParams.get("role") || "ALL").toUpperCase();
     const q = cleanStr(searchParams.get("q"))?.toLowerCase() || null;
     const take = Math.min(500, Math.max(10, Number(searchParams.get("take") || 200)));
 
-    // ✅ distributors under this sales manager
     const dists = await prisma.distributor.findMany({
       where: { salesManagerId: me.id } as any,
       select: {
@@ -44,7 +44,6 @@ export async function GET(req: Request) {
     const distIds = dists.map((d) => d.id);
     const distById = new Map(dists.map((d) => [d.id, d]));
 
-    // helper filter
     const matches = (row: any) => {
       if (!q) return true;
       const blob = [
@@ -54,8 +53,8 @@ export async function GET(req: Request) {
         row?.role,
         row?.status,
         row?.city,
+        row?.district,
         row?.state,
-        // ❌ district removed (schema me nahi hai to TS error aata hai)
         row?.pincode,
         row?.address,
         row?.distributor?.name,
@@ -72,7 +71,7 @@ export async function GET(req: Request) {
 
     const out: any[] = [];
 
-    // ✅ DISTRIBUTORS (User + Distributor)
+    // ✅ DISTRIBUTORS
     if (role === "ALL" || role === "DISTRIBUTOR") {
       const distUsers = await prisma.user.findMany({
         where: {
@@ -86,7 +85,6 @@ export async function GET(req: Request) {
           phone: true,
           status: true,
           city: true,
-          // district may or may not exist on User; remove if your User model doesn't have it
           district: true as any,
           state: true,
           pincode: true,
@@ -123,7 +121,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // ✅ FIELD OFFICERS (User + Distributor)
+    // ✅ FIELD OFFICERS
     if (role === "ALL" || role === "FIELD_OFFICER") {
       const foUsers = await prisma.user.findMany({
         where: {
@@ -173,7 +171,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // ✅ RETAILERS (Retailer + User(join via map) + Distributor(from distById))
+    // ✅ RETAILERS
     if (role === "ALL" || role === "RETAILER") {
       const retailers = await prisma.retailer.findMany({
         where: { distributorId: { in: distIds } } as any,
@@ -182,6 +180,7 @@ export async function GET(req: Request) {
           name: true,
           phone: true,
           city: true,
+          district: true, // ✅ ADD
           state: true,
           pincode: true,
           address: true,
@@ -207,19 +206,19 @@ export async function GET(req: Request) {
         const d = r.distributorId ? distById.get(r.distributorId) : null;
 
         const row = {
-          id: r.userId, // we edit/reset via User.id
+          id: r.userId,
           role: "RETAILER",
           name: r.name,
           phone: u?.phone || r.phone,
           code: u?.code || null,
-
-          // ✅ IMPORTANT: show INACTIVE if user is inactive
           status: u?.status || r.status,
 
           city: r.city,
+          district: r.district ?? null, // ✅ ADD
           state: r.state,
           pincode: r.pincode,
           address: r.address,
+
           createdAt: r.createdAt,
           retailerId: r.id,
           distributor: d
@@ -231,7 +230,6 @@ export async function GET(req: Request) {
       }
     }
 
-    // sort newest first
     out.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return NextResponse.json({

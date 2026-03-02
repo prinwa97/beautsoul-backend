@@ -1,3 +1,5 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/api/sales-manager/user/users/update/route.ts
+
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
@@ -9,7 +11,6 @@ export const dynamic = "force-dynamic";
 
 function normalizePhone(input: string) {
   const digits = (input || "").replace(/\D/g, "");
-  // allow leading 91 etc
   const ten = digits.length >= 10 ? digits.slice(-10) : "";
   return ten;
 }
@@ -36,7 +37,6 @@ async function distributorUnderMe(meId: string, distributorId: string) {
 }
 
 async function assertUnderSalesManager(meId: string, user: any) {
-  // DISTRIBUTOR + FIELD_OFFICER have distributorId on user
   const distributorId = user?.distributorId ? String(user.distributorId) : null;
 
   if (distributorId) {
@@ -94,13 +94,11 @@ export async function PATCH(req: Request) {
 
     // ✅ If distributor is being changed, ensure NEW distributor is also under this sales manager
     if (nextDistributorId !== undefined) {
-      // only Retailer/FieldOfficer allow change
       const canChange = role === "RETAILER" || role === "FIELD_OFFICER";
       if (!canChange) {
         return NextResponse.json({ ok: false, error: "DISTRIBUTOR_CHANGE_NOT_ALLOWED" }, { status: 400 });
       }
 
-      // if setting to some distributorId (not null), validate it belongs to this SM
       if (nextDistributorId) {
         const ok = await distributorUnderMe(me.id, nextDistributorId);
         if (!ok) return NextResponse.json({ ok: false, error: "INVALID_DISTRIBUTOR" }, { status: 403 });
@@ -152,13 +150,25 @@ export async function PATCH(req: Request) {
       const updatedUser = await tx.user.update({
         where: { id: userId },
         data: userData,
-        select: { id: true, name: true, phone: true, role: true, code: true, distributorId: true, status: true } as any,
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          role: true,
+          code: true,
+          distributorId: true,
+          status: true,
+          city: true,
+          district: true,
+          state: true,
+          pincode: true,
+          address: true,
+        } as any,
       });
 
       // ---------------- role sync ----------------
 
       if (role === "DISTRIBUTOR") {
-        // update distributor profile too
         if (u.distributorId) {
           await tx.distributor.update({
             where: { id: u.distributorId },
@@ -201,8 +211,6 @@ export async function PATCH(req: Request) {
           data: retailerData,
         });
       }
-
-      // FIELD_OFFICER only user table is enough (already handled)
 
       return updatedUser;
     });

@@ -1,3 +1,4 @@
+// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/field-officer/home/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -54,8 +55,21 @@ function getErrMessage(x: unknown) {
 }
 
 function retailerHref(retailerId: string) {
-  // ✅ based on your existing page pattern
   return `/field-officer/orders/history?retailerId=${encodeURIComponent(retailerId)}`;
+}
+
+function rowButtonProps(onActivate: () => void) {
+  return {
+    role: "button" as const,
+    tabIndex: 0,
+    onClick: onActivate,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onActivate();
+      }
+    },
+  };
 }
 
 export default function FieldOfficerHomePage() {
@@ -122,9 +136,7 @@ export default function FieldOfficerHomePage() {
       {/* status */}
       <div className="mt-4">
         {loading ? (
-          <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600">
-            Loading summary…
-          </div>
+          <div className="rounded-2xl border bg-white p-4 text-sm text-gray-600">Loading summary…</div>
         ) : data?.ok ? null : (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
             <div className="text-sm font-semibold text-red-800">Summary error</div>
@@ -133,9 +145,9 @@ export default function FieldOfficerHomePage() {
         )}
       </div>
 
-      {/* Month + Target */}
       {data?.ok && (
         <div className="mt-4 grid gap-3">
+          {/* Month + Target */}
           <div className="rounded-2xl border bg-white p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -171,128 +183,44 @@ export default function FieldOfficerHomePage() {
               </div>
 
               {!targetAmount && (
-                <div className="mt-2 text-xs text-gray-500">
-                  Target amount is 0 (Targets OFF or not set).
-                </div>
+                <div className="mt-2 text-xs text-gray-500">Target amount is 0 (Targets OFF or not set).</div>
               )}
             </div>
           </div>
 
-          {/* Orders inactivity */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-gray-900">No Orders (Top 10)</div>
-                <div className="text-xs text-gray-500">Retailers with maximum no-order days</div>
-              </div>
-              <span className="text-[11px] px-2 py-1 rounded-full border bg-gray-50 text-gray-700">
-                {data.ordersTop10?.length || 0} rows
-              </span>
-            </div>
+          {/* Orders inactivity — FULL ROW LIST (no table/cards) */}
+          <SectionFullRows
+            title="No Orders (Top 10)"
+            subtitle="Retailers with maximum no-order days"
+            count={data.ordersTop10?.length || 0}
+            emptyText="No data."
+            rows={(data.ordersTop10 || []).map((r) => ({
+              id: r.retailerId,
+              title: r.name,
+              subtitle: r.city || "—",
+              rightTop: r.noOrderDays >= 99999 ? "—" : String(r.noOrderDays),
+              rightBottom: "No Order Days",
+              onClick: () => goRetailer(r.retailerId),
+            }))}
+            tip="Tip: is list ko use karke follow-up calls / visit plan banao."
+          />
 
-            <div className="mt-3 overflow-hidden rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-xs text-gray-600">
-                  <tr>
-                    <th className="text-left px-3 py-2">Retailer</th>
-                    <th className="text-left px-3 py-2">City</th>
-                    <th className="text-right px-3 py-2">No Order Days</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(data.ordersTop10 || []).length ? (
-                    (data.ordersTop10 || []).map((r, idx) => (
-                      <tr
-                        key={r.retailerId}
-                        className="border-t hover:bg-gray-50 cursor-pointer"
-                        onClick={() => goRetailer(r.retailerId)}
-                        role="button"
-                        tabIndex={0}
-                      >
-                       <td className="px-3 py-2 font-semibold text-gray-900">
-                        {r.name}
-                      </td>
-                        <td className="px-3 py-2 text-gray-700">{r.city || "—"}</td>
-                        <td className="px-3 py-2 text-right font-bold text-gray-900">
-                          {r.noOrderDays >= 99999 ? "—" : r.noOrderDays}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={3}>
-                        No data.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-2 text-xs text-gray-500">
-              Tip: is list ko use karke follow-up calls / visit plan banao.
-            </div>
-          </div>
-
-          {/* Payments inactivity */}
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-gray-900">Pending Payments (Top 10)</div>
-                <div className="text-xs text-gray-500">Highest pending + oldest last payment</div>
-              </div>
-              <span className="text-[11px] px-2 py-1 rounded-full border bg-gray-50 text-gray-700">
-                {data.paymentsTop10?.length || 0} rows
-              </span>
-            </div>
-
-            <div className="mt-3 overflow-hidden rounded-xl border">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-xs text-gray-600">
-                  <tr>
-                    <th className="text-left px-3 py-2">Retailer</th>
-                    <th className="text-left px-3 py-2">City</th>
-                    <th className="text-right px-3 py-2">Pending</th>
-                    <th className="text-right px-3 py-2">No Pay Days</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(data.paymentsTop10 || []).length ? (
-                    (data.paymentsTop10 || []).map((r, idx) => (
-                      <tr
-                        key={r.retailerId}
-                        className="border-t hover:bg-gray-50 cursor-pointer"
-                        onClick={() => goRetailer(r.retailerId)}
-                        role="button"
-                        tabIndex={0}
-                      >
-                        <td className="px-3 py-2 font-semibold text-gray-900">
-                          {r.name}
-                        </td>
-                        <td className="px-3 py-2 text-gray-700">{r.city || "—"}</td>
-                        <td className="px-3 py-2 text-right font-bold text-gray-900">
-                          ₹{fmtINR(n(r.pendingAmount))}
-                        </td>
-                        <td className="px-3 py-2 text-right font-bold text-gray-900">
-                          {r.noPaymentDays >= 99999 ? "—" : r.noPaymentDays}
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td className="px-3 py-3 text-gray-500" colSpan={4}>
-                        No pending payments found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-2 text-xs text-gray-500">
-              Only retailers with pendingAmount &gt; 0 are included.
-            </div>
-          </div>
+          {/* Payments inactivity — FULL ROW LIST (no table/cards) */}
+          <SectionFullRows
+            title="Pending Payments (Top 10)"
+            subtitle="Highest pending + oldest last payment"
+            count={data.paymentsTop10?.length || 0}
+            emptyText="No pending payments found."
+            rows={(data.paymentsTop10 || []).map((r) => ({
+              id: r.retailerId,
+              title: r.name,
+              subtitle: r.city || "—",
+              rightTop: `₹${fmtINR(n(r.pendingAmount))}`,
+              rightBottom: r.noPaymentDays >= 99999 ? "No Pay Days: —" : `No Pay Days: ${r.noPaymentDays}`,
+              onClick: () => goRetailer(r.retailerId),
+            }))}
+            tip="Only retailers with pendingAmount > 0 are included."
+          />
         </div>
       )}
     </div>
@@ -304,6 +232,71 @@ function MiniStat({ label, value }: { label: string; value: string }) {
     <div className="rounded-xl border bg-gray-50 px-3 py-2">
       <div className="text-[11px] font-semibold text-gray-500">{label}</div>
       <div className="mt-0.5 text-sm font-extrabold text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+function SectionFullRows({
+  title,
+  subtitle,
+  count,
+  rows,
+  emptyText,
+  tip,
+}: {
+  title: string;
+  subtitle: string;
+  count: number;
+  rows: Array<{
+    id: string;
+    title: string;
+    subtitle: string;
+    rightTop: string;
+    rightBottom: string;
+    onClick: () => void;
+  }>;
+  emptyText: string;
+  tip?: string;
+}) {
+  return (
+    <div className="rounded-2xl border bg-white p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-sm font-bold text-gray-900">{title}</div>
+          <div className="text-xs text-gray-500">{subtitle}</div>
+        </div>
+        <span className="text-[11px] px-2 py-1 rounded-full border bg-gray-50 text-gray-700">{count} rows</span>
+      </div>
+
+      <div className="mt-3 overflow-hidden rounded-xl border">
+        {rows.length ? (
+          <div className="divide-y">
+            {rows.map((r) => (
+              <div
+                key={r.id}
+                className="px-3 py-3 hover:bg-gray-50 cursor-pointer"
+                {...rowButtonProps(r.onClick)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-gray-900 truncate">{r.title}</div>
+                    <div className="text-xs text-gray-600 truncate">{r.subtitle}</div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-sm font-extrabold text-gray-900">{r.rightTop}</div>
+                    <div className="text-[11px] font-semibold text-gray-500">{r.rightBottom}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="px-3 py-3 text-sm text-gray-500">{emptyText}</div>
+        )}
+      </div>
+
+      {tip ? <div className="mt-2 text-xs text-gray-500">{tip}</div> : null}
     </div>
   );
 }
