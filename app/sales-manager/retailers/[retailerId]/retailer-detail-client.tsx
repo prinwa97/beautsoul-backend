@@ -1,15 +1,30 @@
-// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/sales-manager/retailers/[retailerId]/retailer-detail-client.tsx
 "use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+
+type MonthWiseRow = {
+  month: string;
+  orders: number;
+  orderQty: number;
+  sales: number;
+
+  // ✅ now nullable (audit missing => null)
+  physicalQty: number | null;
+
+  // ✅ optional if backend sends
+  soldQty?: number | null;
+
+  // ✅ optional flag if backend sends
+  auditMissing?: boolean;
+};
 
 type Resp = {
   ok: boolean;
   error?: string;
   retailer?: any;
   summary?: { totalOrders: number; totalSales: number; aov: number; lastOrderAt: string | null };
-  monthWise?: Array<{ month: string; orders: number; orderQty: number; physicalQty: number; sales: number }>;
+  monthWise?: MonthWiseRow[];
 };
 
 type MonthDetailResp = {
@@ -28,6 +43,11 @@ type MonthDetailResp = {
     auditId?: string | null;
     auditAt?: string | null;
     auditItemsCount?: number;
+
+    // optional debug
+    auditFoundInMonth?: boolean;
+    latestAuditId?: string | null;
+    latestAuditAt?: string | null;
   };
 
   summary?: { totalOrders: number; totalSales: number; aov: number };
@@ -39,12 +59,15 @@ type MonthDetailResp = {
     amount: number;
     orders: number;
 
-    // system stock
+    // system stock (legacy)
     pendingQtyPcs?: number;
+
+    // ✅ sold qty (audit-only). If audit missing => null
+    soldQtyPcs?: number | null;
 
     // audit aware
     auditQtyPcs?: number | null;
-    physicalQtyPcs?: number; // final physical (AUDIT > PENDING)
+    physicalQtyPcs?: number | null; // final physical (AUDIT > PENDING > null)
     physicalSource?: "AUDIT" | "PENDING" | "NONE";
   }>;
 
@@ -52,9 +75,12 @@ type MonthDetailResp = {
     productName: string;
     qtyOnHandPcs: number;
 
+    // ✅ sold qty (audit-only). If audit missing => null
+    soldQtyPcs?: number | null;
+
     // audit aware
     auditQtyPcs?: number | null;
-    physicalQtyPcs?: number;
+    physicalQtyPcs?: number | null;
     physicalSource?: "AUDIT" | "PENDING" | "NONE";
   }>;
 };
@@ -63,20 +89,25 @@ function n(v: any) {
   const x = Number(v);
   return Number.isFinite(x) ? x : 0;
 }
+
 function money(nv: any) {
   const v = Number(nv || 0);
   if (!Number.isFinite(v)) return "0";
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
+
 function dt(s: any) {
   if (!s) return "—";
   const d = new Date(s);
   if (!Number.isFinite(d.getTime())) return "—";
   return d.toLocaleString("en-IN");
 }
+
 function clamp0(v: number) {
   return v < 0 ? 0 : v;
 }
+
+// ✅ return number, but caller will decide display (or null)
 function pct(num: number, den: number) {
   if (!den) return 0;
   return (num / den) * 100;
@@ -122,6 +153,7 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
 
   async function openMonthModal(month: string) {
     if (!month) return;
+
     setOpenMonth(month);
     setModalOpen(true);
     setMonthLoading(true);
@@ -131,9 +163,21 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
       const url = `/api/sales-manager/retailers/${encodeURIComponent(
         retailerId
       )}/month-detail?month=${encodeURIComponent(month)}`;
+
       const res = await fetch(url, { cache: "no-store" });
       const j = (await res.json().catch(() => null)) as MonthDetailResp | null;
-      setMonthDetail(j || { ok: false, error: "FAILED" });
+
+      if (!res.ok || !j?.ok) {
+        setMonthDetail(
+          j || {
+            ok: false,
+            error: j?.error || `HTTP_${res.status}`,
+          }
+        );
+        return;
+      }
+
+      setMonthDetail(j);
     } catch (e: any) {
       setMonthDetail({ ok: false, error: String(e?.message || e) });
     } finally {
@@ -254,9 +298,15 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
                 <tbody>
                   {(data?.monthWise || []).map((m) => {
                     const aov = m.orders ? m.sales / m.orders : 0;
-                    const soldQty = clamp0(n(m.orderQty) - n(m.physicalQty));
-                    const sellThrough = pct(soldQty, n(m.orderQty));
-                    const auditMissing = m.orders > 0 && n(m.physicalQty) === 0;
+
+                    // ✅ Audit-aware sold/through (NO fake 100%)
+                    const hasAudit = m.physicalQty != null;
+                    const soldQty = hasAudit ? clamp0(n(m.orderQty) - n(m.physicalQty)) : null;
+                    const sellThrough =
+                      hasAudit && n(m.orderQty) > 0 ? pct(soldQty ?? 0, n(m.orderQty)) : null;
+
+                    // prefer backend flag if present
+                    const auditMissing = typeof m.auditMissing === "boolean" ? m.auditMissing : m.orders > 0 && !hasAudit;
 
                     return (
                       <tr
@@ -272,11 +322,22 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
                             ) : null}
                           </div>
                         </TD>
+
                         <TD className="text-right">{m.orders}</TD>
                         <TD className="text-right font-black">{n(m.orderQty)}</TD>
-                        <TD className="text-right font-black">{n(m.physicalQty)}</TD>
-                        <TD className="text-right font-black">{soldQty}</TD>
-                        <TD className="text-right font-black">{sellThrough.toFixed(1)}%</TD>
+
+                        <TD className="text-right font-black">
+                          {m.physicalQty == null ? "—" : n(m.physicalQty)}
+                        </TD>
+
+                        <TD className="text-right font-black">
+                          {soldQty == null ? "—" : soldQty}
+                        </TD>
+
+                        <TD className="text-right font-black">
+                          {sellThrough == null ? "—" : `${sellThrough.toFixed(1)}%`}
+                        </TD>
+
                         <TD className="text-right">₹{money(m.sales)}</TD>
                         <TD className="text-right">₹{money(aov)}</TD>
                       </tr>
@@ -296,7 +357,9 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
           </div>
 
           {/* Modal */}
-          {modalOpen ? <MonthModal month={openMonth} loading={monthLoading} detail={monthDetail} onClose={closeModal} /> : null}
+          {modalOpen ? (
+            <MonthModal month={openMonth} loading={monthLoading} detail={monthDetail} onClose={closeModal} />
+          ) : null}
         </>
       ) : null}
     </div>
@@ -337,12 +400,14 @@ function MonthModal({
 
               {auditAt ? (
                 <div className="mt-1 text-xs text-gray-600">
-                  Latest Audit Used: <b>{auditAt}</b>
-                  {detail?.meta?.auditItemsCount ? <span className="text-gray-500"> · items: {detail.meta.auditItemsCount}</span> : null}
+                  Month Audit Used: <b>{auditAt}</b>
+                  {detail?.meta?.auditItemsCount ? (
+                    <span className="text-gray-500"> · items: {detail.meta.auditItemsCount}</span>
+                  ) : null}
                 </div>
               ) : (
                 <div className="mt-1 text-xs text-gray-600">
-                  Latest Audit Used: <b>—</b>
+                  Month Audit Used: <b>—</b>
                 </div>
               )}
             </div>
@@ -356,7 +421,9 @@ function MonthModal({
             {loading ? <div className="text-sm text-gray-600">Loading month detail…</div> : null}
 
             {!loading && detail && !detail.ok ? (
-              <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {detail.error || "UNKNOWN"}</div>
+              <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
+                Error: {detail.error || "UNKNOWN"}
+              </div>
             ) : null}
 
             {!loading && detail?.ok ? (
@@ -365,7 +432,8 @@ function MonthModal({
                 <div className="p-4 rounded-2xl border bg-white lg:col-span-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="text-xs text-gray-600">
-                      Orders: <b>{detail.summary?.totalOrders ?? 0}</b> · Sales: <b>₹{money(detail.summary?.totalSales ?? 0)}</b> · AOV:{" "}
+                      Orders: <b>{detail.summary?.totalOrders ?? 0}</b> · Sales:{" "}
+                      <b>₹{money(detail.summary?.totalSales ?? 0)}</b> · AOV:{" "}
                       <b>₹{money(detail.summary?.aov ?? 0)}</b>
                     </div>
 
@@ -378,11 +446,11 @@ function MonthModal({
                   </div>
                 </div>
 
-                {/* ✅ Products (FULL ROW) — Stock(All) removed */}
+                {/* Products */}
                 <div className="p-4 rounded-2xl border bg-white lg:col-span-3">
                   <div className="text-base font-black text-gray-900">Products (Ordered + Physical)</div>
                   <div className="mt-1 text-xs text-gray-500">
-                    Physical = <b>AUDIT</b> (if available) else <b>PENDING</b>
+                    Physical = <b>AUDIT</b> (if available) else <b>PENDING</b>. Sold Qty = <b>audit soldQty</b> only.
                   </div>
 
                   <div className="mt-3 overflow-x-auto border rounded-2xl bg-white">
@@ -393,7 +461,7 @@ function MonthModal({
                           <TH className="text-right">Orders</TH>
                           <TH className="text-right">Order Qty</TH>
                           <TH className="text-right">Amount</TH>
-                          <TH className="text-right">Pending Qty</TH>
+                          <TH className="text-right">Sold Qty</TH>
                           <TH className="text-right">Audit Qty</TH>
                           <TH className="text-right">Physical</TH>
                           <TH>Src</TH>
@@ -401,27 +469,28 @@ function MonthModal({
                       </thead>
                       <tbody>
                         {(detail.orderedProducts || []).map((p) => {
-                          const pendingQty = n(p.pendingQtyPcs);
                           const auditQty = p.auditQtyPcs == null ? null : n(p.auditQtyPcs);
 
-                          // final physical preference: API > computed fallback
-                          const physicalQty =
-                            p.physicalQtyPcs == null ? (auditQty != null ? auditQty : pendingQty) : n(p.physicalQtyPcs);
+                          // ✅ sold ONLY from audit (if missing => —)
+                          const soldQty = p.soldQtyPcs == null ? null : n(p.soldQtyPcs);
+
+                          // ✅ physical already computed by API (audit > pending > null)
+                          const physicalQty = p.physicalQtyPcs == null ? null : n(p.physicalQtyPcs);
 
                           const src: "AUDIT" | "PENDING" | "NONE" =
-                            (p.physicalSource as any) ||
-                            (auditQty != null ? "AUDIT" : pendingQty > 0 ? "PENDING" : "NONE");
+                            (p.physicalSource as any) || (auditQty != null ? "AUDIT" : "NONE");
 
                           return (
                             <tr key={p.productName} className="border-t">
                               <TD className="font-bold">{p.productName}</TD>
                               <TD className="text-right">{p.orders}</TD>
-                              <TD className="text-right font-black">{p.qty}</TD>
+                              <TD className="text-right font-black">{n(p.qty)}</TD>
                               <TD className="text-right">₹{money(p.amount)}</TD>
 
-                              <TD className="text-right font-black">{pendingQty}</TD>
+                              <TD className="text-right font-black">{soldQty == null ? "—" : soldQty}</TD>
                               <TD className="text-right font-black">{auditQty == null ? "—" : auditQty}</TD>
-                              <TD className="text-right font-black">{physicalQty}</TD>
+                              <TD className="text-right font-black">{physicalQty == null ? "—" : physicalQty}</TD>
+
                               <TD>
                                 <Badge cls={sourceBadgeCls(src)}>{src}</Badge>
                               </TD>
@@ -517,6 +586,7 @@ function Badge({ children, cls }: { children: any; cls: string }) {
 function TH({ children, className = "" }: { children: any; className?: string }) {
   return <th className={["px-4 py-3 font-black", className].join(" ")}>{children}</th>;
 }
+
 function TD({ children, className = "", colSpan }: { children: any; className?: string; colSpan?: number }) {
   return (
     <td colSpan={colSpan} className={["px-4 py-3 align-top", className].join(" ")}>

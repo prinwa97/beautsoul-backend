@@ -51,16 +51,18 @@ export default function CityDrawer({
   const [data, setData] = useState<Resp | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  const api = useMemo(() => {
+    const api = useMemo(() => {
     if (!city) return "";
     const p = new URLSearchParams();
     p.set("mode", mode);
-    if (mode === "CUSTOM") {
-      p.set("from", from);
-      p.set("to", to);
-    }
+
+    // ✅ Always pass range (single source of truth from parent)
+    if (from) p.set("from", from);
+    if (to) p.set("to", to);
+
     return `/api/sales-manager/retailers/cities/${encodeURIComponent(city)}/drawer?${p.toString()}`;
   }, [city, mode, from, to]);
+
 
   useEffect(() => {
     if (!open || !api) return;
@@ -69,8 +71,14 @@ export default function CityDrawer({
       setData(null);
       try {
         const res = await fetch(api, { cache: "no-store" });
-        const j = (await res.json().catch(() => null)) as Resp | null;
-        setData(j || { ok: false, error: "FAILED" });
+               const j = (await res.json().catch(() => null)) as Resp | null;
+
+        if (!res.ok || !j?.ok) {
+          setData(j || { ok: false, error: j?.error || `HTTP_${res.status}` });
+          return;
+        }
+
+        setData(j);
       } catch (e: any) {
         setData({ ok: false, error: String(e?.message || e) });
       } finally {

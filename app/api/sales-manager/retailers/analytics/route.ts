@@ -82,9 +82,20 @@ function toInt(v: any) {
 async function requireSalesManager() {
   const u: any = await getSessionUser();
   if (!u) return { ok: false as const, status: 401 as const, error: "UNAUTHORIZED" };
+
   const role = String(u.role || "").toUpperCase();
-  if (role !== "SALES_MANAGER") return { ok: false as const, status: 403 as const, error: "FORBIDDEN" };
-  return { ok: true as const, userId: String(u.id) };
+  const allowed = new Set(["SALES_MANAGER", "ADMIN", "SUPER_ADMIN"]);
+
+  if (!allowed.has(role)) {
+    return { ok: false as const, status: 403 as const, error: "FORBIDDEN" };
+  }
+
+  // For SALES_MANAGER: their own id is smId
+  // For ADMIN: if your system stores salesManagerId somewhere, you can use that.
+  // Otherwise fallback to u.id (same behavior as before).
+  const smId = String(u.salesManagerId || u.id);
+
+  return { ok: true as const, userId: smId };
 }
 
 // ✅ use plain array (better param binding)
@@ -174,26 +185,15 @@ export async function GET(req: Request) {
 
     // ✅ Backward compatible response (area snapshot removed)
     if (!resolved.ok) {
-      return NextResponse.json({
-        ok: true,
-        warning: resolved.error,
-        summary: {
-          totalRetailers: 0,
-          totalDistributors: 0,
-          newRetailers: 0,
-          newDistributors: 0,
-          active30: 0,
-          inactive31_60: 0,
-          dormant61_90: 0,
-          dead90: 0,
-        },
-        top10: [],
-        nonPerf10: [],
-        visitTop20: [],
-        distributorSummary: [],
-        monthPivot: [],
-      });
-    }
+  return NextResponse.json(
+    {
+      ok: false,
+      error: "TABLE_RESOLVE_FAILED",
+      message: resolved.error,
+    },
+    { status: 500 }
+  );
+}
 
     const { orderTable, itemTable, cols } = resolved;
 

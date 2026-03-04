@@ -9,22 +9,22 @@ export const dynamic = "force-dynamic";
 function clean(v: any) {
   return String(v ?? "").trim();
 }
+function asInt(v: any) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? n : 0;
+}
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ retailerId: string }> } // ✅ Next.js 16 expects Promise
+  { params }: { params: Promise<{ retailerId: string }> }
 ) {
   try {
     await requireSalesManager(["SALES_MANAGER", "ADMIN"]);
 
-    const { retailerId } = await params; // ✅ await params
+    const { retailerId } = await params;
     const rid = clean(retailerId);
-
     if (!rid) {
-      return NextResponse.json(
-        { ok: false, error: "RETAILER_ID_REQUIRED" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "RETAILER_ID_REQUIRED" }, { status: 400 });
     }
 
     const url = new URL(req.url);
@@ -54,10 +54,29 @@ export async function GET(
         systemQty: true,
         physicalQty: true,
         variance: true,
+
+        // ✅ add soldQty if your table has it
+        soldQty: true,
       },
     });
 
-    return NextResponse.json({ ok: true, audit, items });
+    // ✅ if soldQty is null/undefined, optionally derive a fallback
+    // NOTE: This is only a "best guess". Real sold should come from FO input.
+    const items2 = items.map((it: any) => {
+      const systemQty = asInt(it.systemQty);
+      const physicalQty = it.physicalQty == null ? null : asInt(it.physicalQty);
+
+      const derivedSoldQty =
+        it.soldQty != null
+          ? asInt(it.soldQty)
+          : physicalQty == null
+          ? null
+          : Math.max(0, systemQty - physicalQty);
+
+      return { ...it, derivedSoldQty };
+    });
+
+    return NextResponse.json({ ok: true, audit, items: items2 });
   } catch (e: any) {
     console.error("SM AUDIT LATEST ERROR:", e);
     return NextResponse.json(

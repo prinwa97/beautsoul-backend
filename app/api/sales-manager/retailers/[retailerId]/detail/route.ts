@@ -88,22 +88,28 @@ export async function GET(_req: Request, ctx: { params: Promise<{ retailerId: st
     for (const it of o.items) orderMonthMap[k].orderQty += Number(it.qty || 0);
   }
 
-  // ✅ Month-wise Physical Qty from FO audit
+  // ✅ Month-wise Physical + Sold Qty from FO audit
+  // NOTE: audit missing => sold/physical should be NULL (so UI shows "—")
   const audits6m = await prisma.retailerStockAudit.findMany({
     where: { retailerId, auditDate: { gte: start } },
     select: {
       auditDate: true,
-      items: { select: { physicalQty: true } },
+      items: { select: { physicalQty: true, soldQty: true } },
     },
     take: 3000,
     orderBy: { auditDate: "desc" },
   });
 
-  const auditMonthMap: Record<string, { physicalQty: number }> = {};
+  const auditMonthMap: Record<string, { physicalQty: number; soldQty: number; auditsCount: number }> = {};
   for (const a of audits6m) {
     const k = monthKey(new Date(a.auditDate));
-    if (!auditMonthMap[k]) auditMonthMap[k] = { physicalQty: 0 };
-    for (const it of a.items) auditMonthMap[k].physicalQty += Number(it.physicalQty || 0);
+    if (!auditMonthMap[k]) auditMonthMap[k] = { physicalQty: 0, soldQty: 0, auditsCount: 0 };
+
+    auditMonthMap[k].auditsCount += 1;
+    for (const it of a.items) {
+      auditMonthMap[k].physicalQty += Number(it.physicalQty ?? 0);
+      auditMonthMap[k].soldQty += Number(it.soldQty ?? 0);
+    }
   }
 
   // month keys chronological
@@ -113,13 +119,24 @@ export async function GET(_req: Request, ctx: { params: Promise<{ retailerId: st
     monthKeys.push(monthKey(d));
   }
 
-  const monthWise = monthKeys.map((k) => ({
-    month: k,
-    orders: orderMonthMap[k]?.orders || 0,
-    orderQty: orderMonthMap[k]?.orderQty || 0,           // ✅ NEW COLUMN
-    physicalQty: auditMonthMap[k]?.physicalQty || 0,
-    sales: orderMonthMap[k]?.sales || 0,
-  }));
+  const monthWise = monthKeys.map((k) => {
+    const ordersCount = orderMonthMap[k]?.orders || 0;
+    const orderQty = orderMonthMap[k]?.orderQty || 0;
+
+    const hasAudit = (auditMonthMap[k]?.auditsCount || 0) > 0;
+
+    return {
+      month: k,
+      orders: ordersCount,
+      orderQty,
+      // ✅ NULL if no audit (avoid fake 0 / fake 100% sell-through)
+      physicalQty: hasAudit ? auditMonthMap[k].physicalQty : null,
+      soldQty: hasAudit ? auditMonthMap[k].soldQty : null,
+      // ✅ UI badge helper
+      auditMissing: !hasAudit && ordersCount > 0,
+      sales: orderMonthMap[k]?.sales || 0,
+    };
+  });
 
   const totalOrders = orders.length;
   const totalSales = orders.reduce((a, x) => a + Number(x.totalAmount || 0), 0);

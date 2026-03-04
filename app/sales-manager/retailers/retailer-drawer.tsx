@@ -214,15 +214,25 @@ export default function RetailerDrawer({
 
     (async () => {
       try {
-        // ✅ pass mode + from/to (if available)
+               // ✅ FIX: from/to sirf CUSTOM me bhejo (MONTH/YEAR/TODAY me backend range ko mat override karo)
         const p = new URLSearchParams();
         p.set("mode", mode);
-        if (from) p.set("from", from);
-        if (to) p.set("to", to);
 
-        const url = `/api/sales-manager/retailers/${encodeURIComponent(retailerId)}/products/combined?${p.toString()}`;
+        if (mode === "CUSTOM") {
+          if (from) p.set("from", from);
+          if (to) p.set("to", to);
+        }
+
+        const url = `/api/sales-manager/retailers/${encodeURIComponent(
+          retailerId
+        )}/products/combined?${p.toString()}`;
+
+        console.log("DRAWER COMBINED URL =>", url);
+
         const res = await fetch(url, { cache: "no-store", signal: rowsCtrl.signal });
         const j = (await res.json().catch(() => null)) as CombinedResp | null;
+
+        console.log("DRAWER COMBINED RESP =>", res.status, j);
 
         if (!res.ok || !j?.ok) {
           const msg = j?.error || `HTTP_${res.status}`;

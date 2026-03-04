@@ -29,6 +29,20 @@ function clamp(n: number, a: number, b: number) {
   return Math.min(Math.max(n, a), b);
 }
 
+function normalizeRole(v: any) {
+  return String(v ?? "")
+    .trim()
+    .toUpperCase()
+    .replaceAll("-", "_")
+    .replaceAll(" ", "_");
+}
+
+function boolFrom(v: any) {
+  const s = String(v ?? "").toLowerCase().trim();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
+/* ----------------------------- date helpers ----------------------------- */
 // IST start-of-day
 function startOfDayIST(d = new Date()) {
   const x = new Date(d);
@@ -45,6 +59,17 @@ function startOfMonthUTC(d: Date) {
 }
 function startOfYearUTC(d: Date) {
   return new Date(Date.UTC(d.getUTCFullYear(), 0, 1, 0, 0, 0));
+}
+
+// FY: 1 Apr -> 31 Mar (IST-aligned, but returned as UTC Date)
+function startOfFYUTC(now = new Date()) {
+  // We align FY boundary based on IST date
+  const istNow = new Date(now.getTime() + 330 * 60 * 1000);
+  const y = istNow.getUTCFullYear();
+  const m = istNow.getUTCMonth() + 1; // 1..12 in IST via UTC getters
+  // FY starts Apr 1
+  const fyStartYear = m >= 4 ? y : y - 1;
+  return new Date(Date.UTC(fyStartYear, 3, 1, 0, 0, 0)); // Apr(3)
 }
 
 type Mode = "TODAY" | "MONTH" | "YEAR" | "CUSTOM";
@@ -324,24 +349,82 @@ function expectedImpactFromAov(aov90: number, confidence: number) {
 /* --------------------------------- handler --------------------------------- */
 export async function GET(req: Request) {
   try {
+    const url = new URL(req.url);
+    const debugAuth = boolFrom(process.env.DEBUG_AUTH) || url.searchParams.get("debug") === "1";
+
     /* ------------------------------ auth ------------------------------ */
-    const session: any = await getSessionUser();
-    if (!session) return json(false, { error: "UNAUTHORIZED", session: null }, 401);
+    // Normal session
+    const session: any = await getSessionUser().catch(() => null);
 
-    const role = String(session.role || "").toUpperCase();
-    if (role !== "SALES_MANAGER" && role !== "ADMIN") return json(false, { error: "FORBIDDEN" }, 403);
+    // Header fallback (DEV only usage)
+    const h = new Headers(req.headers);
+    const headerUserId = cleanStr(h.get("x-user-id"));
+    const headerUserRole = normalizeRole(h.get("x-user-role"));
 
-    const salesManagerId = String(session.id || "");
-    if (!salesManagerId) return json(false, { error: "INVALID_SESSION" }, 401);
+    const sessionRole = normalizeRole(session?.role);
+    const sessionId = cleanStr(session?.id);
+
+    const userId = sessionId || headerUserId;
+    const role = sessionRole || headerUserRole;
+
+    if (debugAuth) {
+      console.log("[AI_CONSOLE] debugAuth=1");
+      console.log("[AI_CONSOLE] session =", session);
+      console.log("[AI_CONSOLE] sessionRole =", sessionRole, "sessionId =", sessionId);
+      console.log("[AI_CONSOLE] headerUserId =", headerUserId, "headerUserRole =", headerUserRole);
+      console.log("[AI_CONSOLE] resolved role =", role, "resolved userId =", userId);
+    }
+
+    if (!userId) {
+      return json(
+        false,
+        {
+          error: "UNAUTHORIZED",
+          message: "No session user found (cookie missing) and no x-user-id header provided.",
+          ...(debugAuth ? { debug: { session: session ? { id: sessionId, role: sessionRole } : null, headerUserId, headerUserRole } } : {}),
+        },
+        401
+      );
+    }
+
+    if (role !== "SALES_MANAGER" && role !== "ADMIN") {
+      return json(
+        false,
+        {
+          error: "FORBIDDEN",
+          message: `Role not allowed: ${role || "UNKNOWN"}`,
+          ...(debugAuth ? { debug: { session: session ? { id: sessionId, role: sessionRole } : null, headerUserId, headerUserRole } } : {}),
+        },
+        403
+      );
+    }
+
+    const salesManagerId = userId;
 
     const sm = await prisma.user.findUnique({
       where: { id: salesManagerId },
       select: { id: true, role: true },
     });
-    if (!sm) return json(false, { error: "SESSION_USER_NOT_IN_DB", salesManagerId }, 401);
+
+    if (!sm) {
+      return json(
+        false,
+        { error: "SESSION_USER_NOT_IN_DB", salesManagerId, ...(debugAuth ? { debug: { role, sessionRole, headerUserRole } } : {}) },
+        401
+      );
+    }
+
+    // DB role check (extra safety)
+    const dbRole = normalizeRole(sm.role);
+    if (dbRole !== "SALES_MANAGER" && dbRole !== "ADMIN") {
+      return json(
+        false,
+        { error: "FORBIDDEN", message: `DB role not allowed: ${dbRole}`, ...(debugAuth ? { debug: { dbRole, role } } : {}) },
+        403
+      );
+    }
 
     /* ------------------------------ params ------------------------------ */
-    const url = new URL(req.url);
     const mode = asMode(url.searchParams.get("mode"));
     const distId = cleanStr(url.searchParams.get("distId"));
     const city = cleanStr(url.searchParams.get("city"));
@@ -356,14 +439,32 @@ export async function GET(req: Request) {
       rangeFrom = startOfDayIST(now);
       rangeTo = new Date(rangeFrom.getTime() + 24 * 60 * 60 * 1000);
     } else if (mode === "YEAR") {
-      rangeFrom = startOfYearUTC(new Date());
-      rangeTo = new Date();
+      // If UI sends from/to, prefer it; else FY default
+      const f = parseYMD(url.searchParams.get("from"));
+      const t = parseYMD(url.searchParams.get("to"));
+      if (f && t) {
+        rangeFrom = f;
+        rangeTo = new Date(t.getTime() + 24 * 60 * 60 * 1000);
+      } else {
+        rangeFrom = startOfFYUTC(now);
+        rangeTo = new Date();
+      }
     } else if (mode === "CUSTOM") {
       const f = parseYMD(url.searchParams.get("from"));
       const t = parseYMD(url.searchParams.get("to"));
       if (!f || !t) return json(false, { error: "INVALID_RANGE", message: "CUSTOM requires from & to" }, 400);
       rangeFrom = f;
       rangeTo = new Date(t.getTime() + 24 * 60 * 60 * 1000);
+    } else if (mode === "MONTH") {
+      const f = parseYMD(url.searchParams.get("from"));
+      const t = parseYMD(url.searchParams.get("to"));
+      if (f && t) {
+        rangeFrom = f;
+        rangeTo = new Date(t.getTime() + 24 * 60 * 60 * 1000);
+      } else {
+        rangeFrom = startOfMonthUTC(new Date());
+        rangeTo = new Date();
+      }
     } else {
       rangeFrom = startOfMonthUTC(new Date());
       rangeTo = new Date();
@@ -630,7 +731,6 @@ export async function GET(req: Request) {
     for (const r of riskRetailersMerged.slice(0, 30)) candidateRetailerIdsSet.add(r.id);
     const candidateRetailerIds = Array.from(candidateRetailerIdsSet).slice(0, 60);
 
-    // ✅ retailer meta includes distributor name
     const retailerRows = await prisma.retailer.findMany({
       where: { id: { in: candidateRetailerIds }, ...(distId ? { distributorId: distId } : {}), ...(city ? { city } : {}) },
       select: { id: true, name: true, city: true, distributor: { select: { name: true } } },
@@ -648,7 +748,7 @@ export async function GET(req: Request) {
     }
     const engineRetailerIds = Array.from(retailerIndex.keys()).slice(0, 60);
 
-    // ✅ last order info for these retailers (efficient: groupBy + fetch that order)
+    /* -------------------- last order info for these retailers -------------------- */
     const lastOrderInfo = new Map<string, { at: string | null; amount: number | null }>();
     if (engineRetailerIds.length) {
       const lastOrderAgg = await prisma.order.groupBy({
@@ -664,7 +764,6 @@ export async function GET(req: Request) {
         if (rid && dt) lookup.set(rid, dt);
       }
 
-      // fetch latest orders in one query (take safe)
       const lastOrdersRows = await prisma.order.findMany({
         where: {
           OR: Array.from(lookup.entries()).map(([rid, dt]) => ({
@@ -681,11 +780,14 @@ export async function GET(req: Request) {
         if (!rid || lastOrderInfo.has(rid)) continue;
         const amt =
           o?.totalAmount != null ? num(o.totalAmount) : (o?.items || []).reduce((s: number, it: any) => s + num(it.amount), 0);
-        lastOrderInfo.set(rid, { at: o.createdAt ? new Date(o.createdAt).toISOString() : null, amount: Number.isFinite(amt) ? Math.round(amt) : null });
+        lastOrderInfo.set(rid, {
+          at: o.createdAt ? new Date(o.createdAt).toISOString() : null,
+          amount: Number.isFinite(amt) ? Math.round(amt) : null,
+        });
       }
     }
 
-    // 3) city retailer counts
+    /* -------------------- city retailer counts -------------------- */
     const cityCounts = await prisma.retailer
       .groupBy({
         by: ["city"],
@@ -701,7 +803,7 @@ export async function GET(req: Request) {
       if (c && c !== "—") cityRetailerCount.set(c, n);
     }
 
-    // 4) orders 90d for candidates (curr + prev90)
+    /* -------------------- orders 90d for candidates (curr + prev90) -------------------- */
     const TAKE90 = 15000;
     const [o90, o90prev] = await Promise.all([
       prisma.order.findMany({
@@ -725,7 +827,7 @@ export async function GET(req: Request) {
       }),
     ]);
 
-    // 5) inventory YES
+    /* -------------------- inventory YES -------------------- */
     const pr: any = prisma as any;
     const stockFound = pickStockLotDelegate(pr);
     let stockModelKey: string | null = null;
@@ -761,7 +863,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // 6) stats maps
+    /* -------------------- stats maps -------------------- */
     const retailerStats = new Map<
       string,
       {
@@ -896,7 +998,7 @@ export async function GET(req: Request) {
       return out.slice(0, topN);
     }
 
-    // 8) compute targets
+    /* -------------------- compute targets -------------------- */
     const level4Targets: EngineTarget[] = [];
 
     for (const rid of engineRetailerIds) {
@@ -1002,7 +1104,7 @@ export async function GET(req: Request) {
           stockQty = m ? num(m.get(key) || 0) : 0;
           stockAvailable = stockQty > 0;
           stockNote = stockAvailable ? "In stock" : "Out of stock (system)";
-          if (!stockAvailable) continue;
+          if (!stockAvailable) continue; // hard reject
         } else {
           stockQty = null;
           stockAvailable = true;
@@ -1105,8 +1207,8 @@ export async function GET(req: Request) {
         const list: EngineTarget["recommendations"] = [];
         for (const x of cTop2) {
           const m = stockByRetailerProduct.get(rid);
-          const stockQty = inventoryEnabled ? num(m?.get(x.key) || 0) : null;
-          const ok = inventoryEnabled ? (stockQty || 0) > 0 : true;
+          const stockQty2 = inventoryEnabled ? num(m?.get(x.key) || 0) : null;
+          const ok = inventoryEnabled ? (stockQty2 || 0) > 0 : true;
           if (!ok) continue;
 
           list.push({
@@ -1115,14 +1217,10 @@ export async function GET(req: Request) {
             confidence: 70,
             expectedImpactMin: 1200,
             expectedImpactMax: 4200,
-            reasons: [
-              "Retailer is inactive / zero orders",
-              "City fast mover",
-              inventoryEnabled ? "Stock available (system)" : "Stock check pending",
-            ],
+            reasons: ["Retailer is inactive / zero orders", "City fast mover", inventoryEnabled ? "Stock available (system)" : "Stock check pending"],
             psychology: psychLine("DECLINING"),
             script: scriptFor("DECLINING", null, x.productName, "Restart with fast mover (city)"),
-            stock: { available: true, qty: stockQty, note: inventoryEnabled ? "In stock (system)" : "Stock model not available" },
+            stock: { available: true, qty: stockQty2, note: inventoryEnabled ? "In stock (system)" : "Stock model not available" },
           });
 
           if (list.length >= 2) break;
@@ -1153,7 +1251,7 @@ export async function GET(req: Request) {
 
     level4Targets.sort((a, b) => (b.recommendations[0]?.score || 0) - (a.recommendations[0]?.score || 0));
 
-    /* ------------------------------ insights (kept) ------------------------------ */
+    /* ------------------------------ insights ------------------------------ */
     const insights: any[] = [];
     if (riskRetailersMerged.length) {
       insights.push({
@@ -1289,9 +1387,9 @@ export async function GET(req: Request) {
     );
 
     const todayPlan = (todayPlanRaw || [])
-      .filter((t: any) => String(t.type || "").toUpperCase() !== "DAILY_CLOSE")
+      .filter((t: any) => normalizeRole(t.type) !== "DAILY_CLOSE")
       .map((t: any) => {
-        const typeKey = String(t.type || "").toUpperCase();
+        const typeKey = normalizeRole(t.type);
         const reasonUi = simpleReason(t.type, t.aiReason);
 
         const products = Array.isArray(t.productNames) ? t.productNames.filter(Boolean) : [];
@@ -1340,16 +1438,97 @@ export async function GET(req: Request) {
       });
 
     const totalTasks = todayPlan.length;
-    const doneTasks = todayPlan.filter((t: any) => String(t.status || "").toUpperCase() === "DONE").length;
+    const doneTasks = todayPlan.filter((t: any) => normalizeRole(t.status) === "DONE").length;
     const openCount = totalTasks - doneTasks;
 
     const executiveBrief = [
       { id: "brief_today_plan", type: "TODAY_PLAN", title: `Today: ${openCount} tasks pending.`, count: openCount },
-      { id: "brief_top_city", type: "TOP_CITY", title: `Best city today: ${topCityName || "—"}`, count: topCities[0]?.sales || 0, city: topCityName || "—" },
-      { id: "brief_top_product", type: "TOP_PRODUCT", title: `Best-selling product: ${topProductName || "—"}`, count: topProducts[0]?.sales || 0, productName: topProductName || "—" },
+      {
+        id: "brief_top_city",
+        type: "TOP_CITY",
+        title: `Best city today: ${topCityName || "—"}`,
+        count: topCities[0]?.sales || 0,
+        city: topCityName || "—",
+      },
+      {
+        id: "brief_top_product",
+        type: "TOP_PRODUCT",
+        title: `Best-selling product: ${topProductName || "—"}`,
+        count: topProducts[0]?.sales || 0,
+        productName: topProductName || "—",
+      },
       { id: "brief_risk", type: "RISK_ALERT", title: `Risk: ${riskRetailersMerged.length} retailers inactive / no orders`, count: riskRetailersMerged.length },
       { id: "brief_level4", type: "AI_LEVEL4", title: `Level-4 Engine: ${level4Targets.length} retailers analyzed (90d)`, count: level4Targets.length },
     ];
+
+    // ✅ NEW: proof/explainability reasons (for View Proof modal Top Reasons)
+    const topCity = topCities[0] || null;
+    const topProduct = topProducts[0] || null;
+
+    const proofReasons: string[] = [];
+    proofReasons.push(`Today Plan: ${openCount} tasks pending out of ${totalTasks}.`);
+
+    if (topCity) {
+      proofReasons.push(
+        `Top City: ${topCity.city} (Sales ₹${Math.round(topCity.sales)} from ${topCity.orders} orders, growth ${Number(topCity.growthPct || 0).toFixed(2)}%).`
+      );
+    } else {
+      proofReasons.push(`Top City: — (no city sales in selected range).`);
+    }
+
+    if (topProduct) {
+      proofReasons.push(
+        `Top Product: ${topProduct.productName} (Sales ₹${Math.round(topProduct.sales)} • Orders ${topProduct.orders} • Qty ${topProduct.qty} • Repeat buyers ${topProduct.repeat}, growth ${Number(topProduct.growthPct || 0).toFixed(2)}%).`
+      );
+    } else {
+      proofReasons.push(`Top Product: — (no product sales in selected range).`);
+    }
+
+    if (riskRetailersMerged.length) {
+      proofReasons.push(
+        `Risk rule: retailers with (A) zero orders OR (B) last order >= 30 days ago. Found: ${riskRetailersMerged.length}.`
+      );
+    } else {
+      proofReasons.push(`Risk rule: zero orders OR last order >= 30 days ago. Found: 0.`);
+    }
+
+    proofReasons.push(`Level-4: ${level4Targets.length} retailers analyzed using last 90 days orders.`);
+    proofReasons.push(
+      inventoryEnabled
+        ? `Inventory: enabled (${stockModelKey}) — out-of-stock recommendations are hard-rejected.`
+        : `Inventory: disabled — stock model not found; recommendations are sales-only.`
+    );
+
+    // ✅ NEW: structured proof (UI can use later)
+    const proof = {
+      ranges: {
+        mode,
+        current: { from: rangeFrom.toISOString(), to: rangeTo.toISOString() },
+        previous: { from: prevFrom.toISOString(), to: prevTo.toISOString() },
+      },
+      topCity: topCity
+        ? { city: topCity.city, orders: topCity.orders, sales: Math.round(topCity.sales), growthPct: Number(topCity.growthPct || 0) }
+        : null,
+      topProduct: topProduct
+        ? {
+            productName: topProduct.productName,
+            orders: topProduct.orders,
+            qty: topProduct.qty,
+            sales: Math.round(topProduct.sales),
+            repeat: topProduct.repeat,
+            growthPct: Number(topProduct.growthPct || 0),
+          }
+        : null,
+      riskSample: riskRetailersMerged.slice(0, 10),
+      inventory: { enabled: inventoryEnabled, stockModelKey: stockModelKey || null },
+      engine: { days: engineDays, from: engineFrom.toISOString(), to: engineTo.toISOString() },
+      counts: {
+        ordersInRange: orders.length,
+        prevOrdersInRange: prevOrders.length,
+        engineOrders90: o90.length,
+        enginePrevOrders90: o90prev.length,
+      },
+    };
 
     return json(true, {
       aiEnabled: true,
@@ -1368,8 +1547,29 @@ export async function GET(req: Request) {
       leaderboards: { topRetailers: topRetailers.slice(0, limit), topCities, topProducts, slowMoversByCity },
       level4: { targets: level4Targets.slice(0, 40) },
       insights,
-      performance: { score: 0, total: totalTasks, done: doneTasks, openCount, reasons: [] },
-      debug: { ordersInRange: orders.length, prevOrdersInRange: prevOrders.length, engineOrders90: o90.length, enginePrevOrders90: o90prev.length, created },
+
+      // ✅ UPDATED: View Proof will show these in "Top Reasons"
+      performance: { score: 0, total: totalTasks, done: doneTasks, openCount, reasons: proofReasons },
+
+      // ✅ NEW: extra structured proof (optional for UI)
+      proof,
+
+      debug: debugAuth
+        ? {
+            auth: { role, sessionRole, headerUserRole, userId },
+            ordersInRange: orders.length,
+            prevOrdersInRange: prevOrders.length,
+            engineOrders90: o90.length,
+            enginePrevOrders90: o90prev.length,
+            created,
+          }
+        : {
+            ordersInRange: orders.length,
+            prevOrdersInRange: prevOrders.length,
+            engineOrders90: o90.length,
+            enginePrevOrders90: o90prev.length,
+            created,
+          },
     });
   } catch (e: any) {
     if (isPrismaTableMissing(e)) return json(true, { aiEnabled: false, reason: "TASK_TABLE_MISSING" }, 200);

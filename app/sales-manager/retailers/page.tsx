@@ -93,8 +93,34 @@ type OrderRow = {
 
 function isoDate(d: Date) {
   const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x.toISOString().slice(0, 10);
+  const yyyy = x.getFullYear();
+  const mm = String(x.getMonth() + 1).padStart(2, "0");
+  const dd = String(x.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`; // ✅ local YYYY-MM-DD (no timezone shift)
+}
+
+function startOfMonthLocal(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+
+function addDaysLocal(d: Date, days: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function startOfYearLocal(d = new Date()) {
+  return new Date(d.getFullYear(), 0, 1);
+}
+
+// ✅ NEW: Indian Financial Year start (IST/local)
+function startOfFYLocal(d = new Date()) {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1; // 1..12
+  // Apr–Dec => FY starts current year Apr 1
+  // Jan–Mar => FY starts previous year Apr 1
+  const fyYear = m >= 4 ? y : y - 1;
+  return new Date(fyYear, 3, 1); // month=3 => April (0-indexed)
 }
 function money(n: any) {
   const v = Number(n || 0);
@@ -289,16 +315,12 @@ export default function SMRetailersAnalyticsPage() {
     setCityOpen(true);
   }
 
-  const [mode, setMode] = useState<Mode>("MONTH");
-  const [sort, setSort] = useState<Sort>("SALES");
+  const [mode, setMode] = useState<Mode>("YEAR");
+const [sort, setSort] = useState<Sort>("SALES");
 
-  const [from, setFrom] = useState<string>(() => {
-    const d = new Date();
-    d.setDate(1);
-    return isoDate(d);
-  });
-  const [to, setTo] = useState<string>(() => isoDate(new Date()));
-
+// ✅ Default range: FY start -> today (IST/local)
+const [from, setFrom] = useState<string>(() => isoDate(startOfFYLocal(new Date())));
+const [to, setTo] = useState<string>(() => isoDate(new Date()));
   const [distId, setDistId] = useState<string>("");
   const [city, setCity] = useState<string>("");
 
@@ -367,38 +389,81 @@ export default function SMRetailersAnalyticsPage() {
   const [taskSearch, setTaskSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
 
-  function startMyDay() {
+    function startMyDay() {
     const el = document.getElementById("today-plan");
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  const qs = useMemo(() => {
-    const p = new URLSearchParams();
-    p.set("mode", mode);
-    p.set("sort", sort);
-    p.set("months", "4");
-    if (mode === "CUSTOM") {
-      p.set("from", from);
-      p.set("to", to);
-    }
-    if (distId) p.set("distId", distId);
-    if (city) p.set("city", city);
-    return p.toString();
-  }, [mode, sort, from, to, distId, city]);
+    // ✅ Analytics query string
+  // ✅ Analytics query string
+const qs = useMemo(() => {
+  const p = new URLSearchParams();
+  p.set("mode", mode);
+  p.set("sort", sort);
+  p.set("months", "4");
 
-  const aiQs = useMemo(() => {
-    const p = new URLSearchParams();
-    p.set("mode", mode);
-    if (mode === "CUSTOM") {
-      p.set("from", from);
-      p.set("to", to);
-    }
-    if (distId) p.set("distId", distId);
-    if (city) p.set("city", city);
-    p.set("limit", "10");
-    return p.toString();
-  }, [mode, from, to, distId, city]);
+  // ✅ Always send from/to (IST local), and make `to` exclusive by sending tomorrow
+  if (mode === "CUSTOM") {
+    p.set("from", from);
+    p.set("to", isoDate(addDaysLocal(new Date(to), 1)));
+  } else if (mode === "MONTH") {
+    const start = startOfMonthLocal(new Date());
+    const end = addDaysLocal(new Date(), 1);
+    p.set("from", isoDate(start));
+    p.set("to", isoDate(end));
+  } else if (mode === "YEAR") {
+  // ✅ Financial Year (India): 1 Apr -> today (exclusive tomorrow)
+  const start = startOfFYLocal(new Date());
+  const end = addDaysLocal(new Date(), 1);
+  p.set("from", isoDate(start));
+  p.set("to", isoDate(end));
+  } 
+  else if (mode === "TODAY") {
+    const start = new Date();
+    const end = addDaysLocal(new Date(), 1);
+    p.set("from", isoDate(start));
+    p.set("to", isoDate(end));
+  }
 
+  if (distId) p.set("distId", distId);
+  if (city) p.set("city", city);
+
+  return p.toString();
+}, [mode, sort, from, to, distId, city]);
+
+// ✅ AI console query string
+const aiQs = useMemo(() => {
+  const p = new URLSearchParams();
+  p.set("mode", mode);
+
+  if (mode === "CUSTOM") {
+    p.set("from", from);
+    p.set("to", isoDate(addDaysLocal(new Date(to), 1)));
+  } else if (mode === "MONTH") {
+    const start = startOfMonthLocal(new Date());
+    const end = addDaysLocal(new Date(), 1);
+    p.set("from", isoDate(start));
+    p.set("to", isoDate(end));
+  } else if (mode === "YEAR") {
+  // ✅ Financial Year (India): 1 Apr -> today (exclusive tomorrow)
+  const start = startOfFYLocal(new Date());
+  const end = addDaysLocal(new Date(), 1);
+  p.set("from", isoDate(start));
+  p.set("to", isoDate(end));
+}
+  else if (mode === "TODAY") {
+    const start = new Date();
+    const end = addDaysLocal(new Date(), 1);
+    p.set("from", isoDate(start));
+    p.set("to", isoDate(end));
+  }
+
+  if (distId) p.set("distId", distId);
+  if (city) p.set("city", city);
+
+  p.set("limit", "10");
+  return p.toString();
+}, [mode, from, to, distId, city]);
   async function load() {
     setLoading(true);
     try {
@@ -797,9 +862,18 @@ export default function SMRetailersAnalyticsPage() {
           </button>
 
           <div className="text-xs text-gray-500">
-            Range: {data?.range?.from ? new Date(data.range.from).toLocaleDateString("en-IN") : "—"} →{" "}
-            {data?.range?.to ? new Date(data.range.to).toLocaleDateString("en-IN") : "—"}
-          </div>
+  {(() => {
+    const f = data?.range?.from ? new Date(String(data.range.from).slice(0, 10) + "T00:00:00") : null;
+    const t0 = data?.range?.to ? new Date(String(data.range.to).slice(0, 10) + "T00:00:00") : null;
+
+    // because backend/UI query uses exclusive "to" (tomorrow), show "to-1 day"
+    const t = t0 ? addDaysLocal(t0, -1) : null;
+
+    const fTxt = f ? f.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+    const tTxt = t ? t.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+    return `Showing: ${fTxt} → ${tTxt}`;
+  })()}
+</div>
         </div>
 
         <div className="flex items-center gap-2">

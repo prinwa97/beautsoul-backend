@@ -9,26 +9,21 @@ function jsonError(msg: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: msg, ...extra }, { status });
 }
 
-function parseMonthToRange(month: string) {
+// ✅ IMPORTANT: Use UTC range so createdAt (UTC) matches correctly
+function parseMonthToRangeUTC(month: string) {
   const m = String(month || "").trim();
   if (!/^\d{4}-\d{2}$/.test(m)) return null;
   const [yy, mm] = m.split("-").map((x) => Number(x));
   if (!yy || !mm || mm < 1 || mm > 12) return null;
 
-  // Month boundaries local time (ok for postgres DateTime usage here)
-  const from = new Date(yy, mm - 1, 1, 0, 0, 0, 0);
-  const to = new Date(yy, mm, 1, 0, 0, 0, 0);
+  const from = new Date(Date.UTC(yy, mm - 1, 1, 0, 0, 0));
+  const to = new Date(Date.UTC(yy, mm, 1, 0, 0, 0));
   return { from, to };
 }
 
 function cleanStr(v: any) {
   const s = String(v ?? "").trim();
   return s.length ? s : "";
-}
-
-function num(v: any) {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : 0;
 }
 
 function pickRetailerOrderDelegate(pr: any) {
@@ -66,7 +61,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
   const { searchParams } = new URL(req.url);
   const month = searchParams.get("month") || "";
-  const range = parseMonthToRange(month);
+  const range = parseMonthToRangeUTC(month);
   if (!range) return jsonError("Invalid month. Use YYYY-MM", 400);
 
   const pr: any = prisma as any;
@@ -105,34 +100,27 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
       _count: { select: { items: true } },
     },
   }).catch(async () => {
-    // fallback minimal
     return await Order.findMany({
       where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
       orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        orderNo: true,
-        status: true,
-        createdAt: true,
-        totalAmount: true,
-      },
+      select: { id: true, orderNo: true, status: true, createdAt: true, totalAmount: true },
     });
   });
 
   // -------------------------
-  // 2) ORDERED PRODUCTS AGG
+  // 2) ORDERED PRODUCTS AGG (from orders)
   // -------------------------
   const productAgg: Record<string, { productName: string; qty: number; amount: number; orders: number }> = {};
   for (const o of orders as any[]) {
-    const items = Array.isArray(o.items) ? o.items : [];
+    const items = Array.isArray((o as any).items) ? (o as any).items : [];
     for (const it of items) {
-      const pname = String(it.productName || "Unknown");
-      const key = pname.toLowerCase();
-      if (!productAgg[key]) productAgg[key] = { productName: pname, qty: 0, amount: 0, orders: 0 };
-      productAgg[key].qty += Number(it.qty || 0);
-      productAgg[key].amount += Number(it.amount || 0);
+      const pname = String(it.productName || "Unknown").trim();
+      const k = pname.toLowerCase();
+      if (!productAgg[k]) productAgg[k] = { productName: pname, qty: 0, amount: 0, orders: 0 };
+      productAgg[k].qty += Number(it.qty || 0);
+      productAgg[k].amount += Number(it.amount || 0);
     }
-    const unique: Set<string> = new Set((items as any[]).map((x) => String(x?.productName || "Unknown").toLowerCase()));
+    const unique: Set<string> = new Set(items.map((x: any) => String(x?.productName || "Unknown").trim().toLowerCase()));
     for (const k of unique) if (productAgg[k]) productAgg[k].orders += 1;
   }
   const orderedProductsBase = Object.values(productAgg).sort((a, b) => b.amount - a.amount);
@@ -159,11 +147,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
     const map: Record<string, { productName: string; qtyOnHandPcs: number }> = {};
     for (const r of rows as any[]) {
-      const pname = String(r.productName || "Unknown");
-      const key = pname.toLowerCase();
+      const pname = String(r.productName || "Unknown").trim();
+      const k = pname.toLowerCase();
       const q = Number(r.qtyOnHandPcs ?? r.qty ?? r.quantity ?? 0);
-      if (!map[key]) map[key] = { productName: pname, qtyOnHandPcs: 0 };
-      map[key].qtyOnHandPcs += q;
+      if (!map[k]) map[k] = { productName: pname, qtyOnHandPcs: 0 };
+      map[k].qtyOnHandPcs += q;
     }
     pendingByProduct = Object.values(map).sort((a, b) => b.qtyOnHandPcs - a.qtyOnHandPcs);
   }
@@ -172,77 +160,151 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   for (const p of pendingByProduct) pendingIndex.set(p.productName.toLowerCase(), p.qtyOnHandPcs);
 
   // -------------------------
-  // 4) AUDIT PHYSICAL STOCK (RetailerStockAudit + Items)
+  // 4) AUDIT IN MONTH (NO FALLBACK FOR QTY)
   // -------------------------
-  // Prefer audit within month, else fallback latest overall
-  let audit = await prisma.retailerStockAudit.findFirst({
+  // ✅ Only use month audit for sold/physical numbers
+  const auditInMonth = await prisma.retailerStockAudit.findFirst({
     where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
     orderBy: { createdAt: "desc" },
     select: { id: true, createdAt: true },
   });
 
-  if (!audit) {
-    audit = await prisma.retailerStockAudit.findFirst({
-      where: { retailerId },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, createdAt: true },
-    });
-  }
+  // ✅ latest overall only for meta display (NOT for qty calculations)
+  const latestAudit = await prisma.retailerStockAudit.findFirst({
+    where: { retailerId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, createdAt: true },
+  });
 
-  const auditIndex = new Map<string, number>();
+  const auditPhysicalIndex = new Map<string, number>();
+  const auditSoldIndex = new Map<string, number>();
+  const auditNameIndex = new Map<string, string>(); // ✅ preserve real casing from audit items
   let auditItemsCount = 0;
 
-  if (audit?.id) {
-    const agg = await prisma.retailerStockAuditItem.groupBy({
-      by: ["productName"],
-      where: { auditId: audit.id },
-      _sum: { physicalQty: true },
-      _count: { _all: true },
-    });
+  if (auditInMonth?.id) {
+    // ✅ get proper names from audit items (small query)
+    const auditNameRows = await prisma.retailerStockAuditItem
+      .findMany({
+        where: { auditId: auditInMonth.id },
+        select: { productName: true },
+        take: 5000,
+      })
+      .catch(async () => []);
 
-    for (const r of agg) {
+    for (const row of auditNameRows as any[]) {
+      const pn = cleanStr(row?.productName) || "Unknown";
+      const k = pn.toLowerCase();
+      if (!auditNameIndex.has(k)) auditNameIndex.set(k, pn);
+    }
+
+    // ✅ group sums
+    const agg = await prisma.retailerStockAuditItem
+      .groupBy({
+        by: ["productName"],
+        where: { auditId: auditInMonth.id },
+        _sum: { physicalQty: true, soldQty: true },
+        _count: { _all: true },
+      })
+      .catch(async () => []);
+
+    for (const r of agg as any[]) {
       const pn = cleanStr(r.productName) || "Unknown";
-      const key = pn.toLowerCase();
-      const sum = Number(r._sum.physicalQty || 0);
-      auditIndex.set(key, sum);
-      auditItemsCount += Number(r._count?._all || 0);
+      const k = pn.toLowerCase();
+
+      const physicalSum = Number(r?._sum?.physicalQty ?? 0);
+      const soldSum = Number(r?._sum?.soldQty ?? 0);
+
+      auditPhysicalIndex.set(k, physicalSum);
+      auditSoldIndex.set(k, soldSum);
+
+      // ensure name exists
+      if (!auditNameIndex.has(k)) auditNameIndex.set(k, pn);
+
+      auditItemsCount += Number(r?._count?._all ?? 0);
     }
   }
 
   // -------------------------
-  // 5) MERGE INTO ORDERED PRODUCTS
+  // 5) MERGE INTO ORDERED PRODUCTS (include AUDIT-only + pending-only)
   // -------------------------
-  const orderedProducts = orderedProductsBase.map((p) => {
-    const key = p.productName.toLowerCase();
-    const pendingQtyPcs = pendingIndex.get(key) ?? 0;
-    const auditQtyPcs = auditIndex.get(key) ?? null;
+  const keySet = new Set<string>();
+  for (const p of orderedProductsBase) keySet.add(p.productName.toLowerCase());
+  for (const k of auditPhysicalIndex.keys()) keySet.add(k);
+  for (const k of pendingIndex.keys()) keySet.add(k);
 
-    const hasAudit = typeof auditQtyPcs === "number";
-    const physicalQtyPcs = hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : pendingQtyPcs;
+  const keys = Array.from(keySet.values());
+
+  const orderedProducts = keys.map((k) => {
+    // base from orders (if exists)
+    const base = orderedProductsBase.find((x) => x.productName.toLowerCase() === k);
+
+    const productName =
+      base?.productName || auditNameIndex.get(k) || (pendingByProduct.find((x) => x.productName.toLowerCase() === k)?.productName ?? k);
+
+    const ordersCount = base?.orders || 0;
+    const orderQty = base?.qty || 0;
+    const amount = base?.amount || 0;
+
+    const pendingQtyPcs = pendingIndex.get(k) ?? 0;
+
+    const auditQtyPcs = auditPhysicalIndex.get(k);
+    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcs === "number";
+
+    // ✅ physical: audit > pending > null
+    const physicalQtyPcs = hasAudit
+      ? Math.max(0, Number(auditQtyPcs || 0))
+      : pendingQtyPcs > 0
+      ? pendingQtyPcs
+      : null;
+
+    // ✅ sold: ONLY from audit, else null (unknown)
+    const soldQtyPcs = hasAudit ? Math.max(0, Number(auditSoldIndex.get(k) ?? 0)) : null;
 
     const physicalSource = hasAudit ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE";
 
     return {
-      ...p,
+      productName,
+      orders: ordersCount,
+      qty: orderQty,
+      amount,
+
       pendingQtyPcs,
+      soldQtyPcs,
       auditQtyPcs: hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : null,
       physicalQtyPcs,
       physicalSource,
     };
   });
 
-  // Pending stock list me bhi audit merge (so right panel can show physical)
+  // ✅ sort: ordered first, then audit-only, then pending-only
+  orderedProducts.sort((a: any, b: any) => {
+    const aHasOrder = (a.amount || 0) > 0 || (a.qty || 0) > 0 || (a.orders || 0) > 0;
+    const bHasOrder = (b.amount || 0) > 0 || (b.qty || 0) > 0 || (b.orders || 0) > 0;
+    if (aHasOrder !== bHasOrder) return aHasOrder ? -1 : 1;
+
+    const aHasAudit = a.auditQtyPcs != null;
+    const bHasAudit = b.auditQtyPcs != null;
+    if (aHasAudit !== bHasAudit) return aHasAudit ? -1 : 1;
+
+    return (b.amount || 0) - (a.amount || 0) || (b.qty || 0) - (a.qty || 0);
+  });
+
   const pendingStock = pendingByProduct.map((p) => {
-    const key = p.productName.toLowerCase();
-    const auditQtyPcs = auditIndex.get(key) ?? null;
-    const hasAudit = typeof auditQtyPcs === "number";
-    const physicalQtyPcs = hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : p.qtyOnHandPcs;
+    const k = p.productName.toLowerCase();
+    const pendingQtyPcs = p.qtyOnHandPcs;
+
+    const auditQtyPcs = auditPhysicalIndex.get(k);
+    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcs === "number";
+
+    const physicalQtyPcs = hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : pendingQtyPcs > 0 ? pendingQtyPcs : null;
+    const soldQtyPcs = hasAudit ? Math.max(0, Number(auditSoldIndex.get(k) ?? 0)) : null;
 
     return {
       ...p,
       auditQtyPcs: hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : null,
       physicalQtyPcs,
-      physicalSource: hasAudit ? "AUDIT" : p.qtyOnHandPcs > 0 ? "PENDING" : "NONE",
+      soldQtyPcs,
+      physicalSource: hasAudit ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
     };
   });
 
@@ -262,10 +324,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
       hasPendingStock: pendingByProduct.length > 0,
       range: { from: range.from.toISOString(), to: range.to.toISOString() },
 
-      // ✅ NEW: audit info (debug + UI)
-      auditId: audit?.id || null,
-      auditAt: audit?.createdAt ? new Date(audit.createdAt).toISOString() : null,
+      // ✅ month audit
+      auditId: auditInMonth?.id || null,
+      auditAt: auditInMonth?.createdAt ? new Date(auditInMonth.createdAt).toISOString() : null,
       auditItemsCount,
+      auditFoundInMonth: !!auditInMonth?.id,
+
+      // ✅ latest audit (display-only)
+      latestAuditId: latestAudit?.id || null,
+      latestAuditAt: latestAudit?.createdAt ? new Date(latestAudit.createdAt).toISOString() : null,
     },
     summary: {
       totalOrders,

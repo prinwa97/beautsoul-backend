@@ -3,6 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation"; // ✅ NEW
 
 type SortKey = "RECENT_AUDIT" | "OLDEST_AUDIT" | "NAME_AZ";
 
@@ -47,6 +48,8 @@ function Icon({ name }: { name: "search" | "refresh" }) {
 }
 
 export default function FOAuditRetailersPage() {
+  const router = useRouter(); // ✅ NEW
+
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("RECENT_AUDIT");
   const [rows, setRows] = useState<RetailerRow[]>([]);
@@ -112,10 +115,24 @@ export default function FOAuditRetailersPage() {
 
   return (
     <div className="p-0 space-y-2">
-      <div className="flex items-end justify-center">
-        <div>
-          <div className="text-2xl font-extrabold">Audit</div>
-        </div>
+      {/* ✅ Header with Back */}
+      <div className="flex items-center justify-between px-1">
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined" && window.history.length > 1) router.back();
+            else router.push("/field-officer/home");
+          }}
+          className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-gray-800 shadow-sm active:scale-[0.99]"
+        >
+          <span className="text-lg leading-none">←</span>
+          Back
+        </button>
+
+        <div className="text-2xl font-extrabold">Audit</div>
+
+        {/* right side placeholder to keep center aligned */}
+        <div className="w-[88px]" />
       </div>
 
       <div className="rounded-2xl border border-black/10 bg-white p-3 shadow-sm space-y-2">
