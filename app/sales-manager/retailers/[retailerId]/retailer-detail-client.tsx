@@ -119,6 +119,22 @@ function sourceBadgeCls(src?: string) {
   return "bg-gray-50 text-gray-800 border-gray-200";
 }
 
+/** ✅ build-safe json parse helper */
+async function safeJson<T>(res: Response): Promise<T | null> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/** ✅ normalize error message safely */
+function getErrMsg(j: any, status: number) {
+  const fromBody =
+    j && typeof j === "object" ? (j.error || j.message || j.msg) : null;
+  return String(fromBody || `HTTP_${status}`);
+}
+
 export default function RetailerDetailClient({ retailerId }: { retailerId: string }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<Resp | null>(null);
@@ -138,14 +154,22 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
     setLoading(true);
     try {
       const res = await fetch(api, { cache: "no-store" });
-      const j = (await res.json().catch(() => null)) as Resp | null;
-      if (!res.ok) {
-        setData(j || { ok: false, error: "FAILED" });
+      const j = await safeJson<Resp>(res);
+
+      if (!res.ok || !j) {
+        const errMsg = getErrMsg(j, res.status);
+        setData({ ok: false, error: errMsg });
         return;
       }
+
+      if (!j.ok) {
+        setData({ ok: false, error: j.error || "FAILED" });
+        return;
+      }
+
       setData(j);
     } catch (e: any) {
-      setData({ ok: false, error: String(e?.message || e) } as any);
+      setData({ ok: false, error: String(e?.message || e) });
     } finally {
       setLoading(false);
     }
@@ -165,15 +189,12 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
       )}/month-detail?month=${encodeURIComponent(month)}`;
 
       const res = await fetch(url, { cache: "no-store" });
-      const j = (await res.json().catch(() => null)) as MonthDetailResp | null;
+      const j = await safeJson<MonthDetailResp>(res);
 
-      if (!res.ok || !j?.ok) {
-        setMonthDetail(
-          j || {
-            ok: false,
-            error: j?.error || `HTTP_${res.status}`,
-          }
-        );
+      // ✅ IMPORTANT: compute errMsg first (no j?.error inside RHS of `j || {...}`)
+      if (!res.ok || !j || !j.ok) {
+        const errMsg = getErrMsg(j, res.status);
+        setMonthDetail({ ok: false, error: errMsg });
         return;
       }
 
@@ -306,7 +327,8 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
                       hasAudit && n(m.orderQty) > 0 ? pct(soldQty ?? 0, n(m.orderQty)) : null;
 
                     // prefer backend flag if present
-                    const auditMissing = typeof m.auditMissing === "boolean" ? m.auditMissing : m.orders > 0 && !hasAudit;
+                    const auditMissing =
+                      typeof m.auditMissing === "boolean" ? m.auditMissing : m.orders > 0 && !hasAudit;
 
                     return (
                       <tr
@@ -330,9 +352,7 @@ export default function RetailerDetailClient({ retailerId }: { retailerId: strin
                           {m.physicalQty == null ? "—" : n(m.physicalQty)}
                         </TD>
 
-                        <TD className="text-right font-black">
-                          {soldQty == null ? "—" : soldQty}
-                        </TD>
+                        <TD className="text-right font-black">{soldQty == null ? "—" : soldQty}</TD>
 
                         <TD className="text-right font-black">
                           {sellThrough == null ? "—" : `${sellThrough.toFixed(1)}%`}
@@ -470,11 +490,7 @@ function MonthModal({
                       <tbody>
                         {(detail.orderedProducts || []).map((p) => {
                           const auditQty = p.auditQtyPcs == null ? null : n(p.auditQtyPcs);
-
-                          // ✅ sold ONLY from audit (if missing => —)
                           const soldQty = p.soldQtyPcs == null ? null : n(p.soldQtyPcs);
-
-                          // ✅ physical already computed by API (audit > pending > null)
                           const physicalQty = p.physicalQtyPcs == null ? null : n(p.physicalQtyPcs);
 
                           const src: "AUDIT" | "PENDING" | "NONE" =

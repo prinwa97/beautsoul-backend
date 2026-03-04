@@ -25,6 +25,21 @@ function money(nv: any) {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
+/* -------------------- ✅ build-safe helpers -------------------- */
+async function safeJson<T>(res: Response): Promise<T | null> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getErrMsg(j: any, status: number) {
+  const fromBody = j && typeof j === "object" ? (j.error || j.message || j.msg) : null;
+  return String(fromBody || `HTTP_${status}`);
+}
+/* -------------------------------------------------------------- */
+
 export default function CityDrawer({
   city,
   open,
@@ -51,7 +66,7 @@ export default function CityDrawer({
   const [data, setData] = useState<Resp | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-    const api = useMemo(() => {
+  const api = useMemo(() => {
     if (!city) return "";
     const p = new URLSearchParams();
     p.set("mode", mode);
@@ -63,28 +78,39 @@ export default function CityDrawer({
     return `/api/sales-manager/retailers/cities/${encodeURIComponent(city)}/drawer?${p.toString()}`;
   }, [city, mode, from, to]);
 
-
   useEffect(() => {
     if (!open || !api) return;
+
+    let cancelled = false;
+
     (async () => {
       setLoading(true);
       setData(null);
+
       try {
         const res = await fetch(api, { cache: "no-store" });
-               const j = (await res.json().catch(() => null)) as Resp | null;
+        const j = await safeJson<Resp>(res);
 
-        if (!res.ok || !j?.ok) {
-          setData(j || { ok: false, error: j?.error || `HTTP_${res.status}` });
+        if (cancelled) return;
+
+        // ✅ FIX: no "j || { error: j?.error }" pattern (prevents TS never)
+        if (!res.ok || !j || !j.ok) {
+          setData({ ok: false, error: getErrMsg(j, res.status) });
           return;
         }
 
         setData(j);
       } catch (e: any) {
+        if (cancelled) return;
         setData({ ok: false, error: String(e?.message || e) });
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [open, api]);
 
   // ✅ FIX: deps array constant (no conditional deps)
@@ -152,7 +178,9 @@ export default function CityDrawer({
         {loading ? <div className="text-sm text-gray-600">Loading…</div> : null}
 
         {!loading && data && !data.ok ? (
-          <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {data.error || "UNKNOWN"}</div>
+          <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
+            Error: {data.error || "UNKNOWN"}
+          </div>
         ) : null}
 
         {!loading && data?.ok ? (
