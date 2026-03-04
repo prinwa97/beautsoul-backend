@@ -663,7 +663,7 @@ model RetailerStockAuditItem {
   systemQty   Int
   physicalQty Int
   variance    Int
-  soldQty     Int @default(0)
+  soldQty     Int         @default(0)
   audit       RetailerStockAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
 
   @@index([auditId])
