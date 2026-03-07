@@ -9,10 +9,11 @@ function jsonError(msg: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: msg, ...extra }, { status });
 }
 
-// ✅ IMPORTANT: Use UTC range so createdAt (UTC) matches correctly
+// current month UTC range
 function parseMonthToRangeUTC(month: string) {
   const m = String(month || "").trim();
   if (!/^\d{4}-\d{2}$/.test(m)) return null;
+
   const [yy, mm] = m.split("-").map((x) => Number(x));
   if (!yy || !mm || mm < 1 || mm > 12) return null;
 
@@ -21,34 +22,76 @@ function parseMonthToRangeUTC(month: string) {
   return { from, to };
 }
 
+// previous month UTC range
+function getPreviousMonthRangeUTC(month: string) {
+  const m = String(month || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(m)) return null;
+
+  const [yy, mm] = m.split("-").map(Number);
+  if (!yy || !mm || mm < 1 || mm > 12) return null;
+
+  const prevYear = mm === 1 ? yy - 1 : yy;
+  const prevMonth = mm === 1 ? 12 : mm - 1;
+
+  const from = new Date(Date.UTC(prevYear, prevMonth - 1, 1, 0, 0, 0));
+  const to = new Date(Date.UTC(prevYear, prevMonth, 1, 0, 0, 0));
+
+  return {
+    month: `${prevYear}-${String(prevMonth).padStart(2, "0")}`,
+    from,
+    to,
+  };
+}
+
 function cleanStr(v: any) {
   const s = String(v ?? "").trim();
   return s.length ? s : "";
 }
 
+function num(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function clamp0(v: number) {
+  return v < 0 ? 0 : v;
+}
+
 function pickRetailerOrderDelegate(pr: any) {
   const candidates = ["retailerOrder", "retailerOrders", "order", "orders"];
   for (const k of candidates) {
-    if (pr?.[k] && typeof pr[k]?.findMany === "function") return { key: k, delegate: pr[k] };
+    if (pr?.[k] && typeof pr[k]?.findMany === "function") {
+      return { key: k, delegate: pr[k] };
+    }
   }
+
   for (const k of Object.keys(pr || {})) {
     if (!pr?.[k] || typeof pr[k]?.findMany !== "function") continue;
     const lk = k.toLowerCase();
-    if (lk.includes("retailer") && lk.includes("order")) return { key: k, delegate: pr[k] };
+    if (lk.includes("retailer") && lk.includes("order")) {
+      return { key: k, delegate: pr[k] };
+    }
   }
+
   return null;
 }
 
 function pickStockLotDelegate(pr: any) {
   const candidates = ["stockLot", "stocklot", "inventoryBatch", "inventoryLot"];
   for (const k of candidates) {
-    if (pr?.[k] && typeof pr[k]?.findMany === "function") return { key: k, delegate: pr[k] };
+    if (pr?.[k] && typeof pr[k]?.findMany === "function") {
+      return { key: k, delegate: pr[k] };
+    }
   }
+
   for (const k of Object.keys(pr || {})) {
     if (!pr?.[k] || typeof pr[k]?.findMany !== "function") continue;
     const lk = k.toLowerCase();
-    if (lk.includes("stock") && (lk.includes("lot") || lk.includes("batch"))) return { key: k, delegate: pr[k] };
+    if (lk.includes("stock") && (lk.includes("lot") || lk.includes("batch"))) {
+      return { key: k, delegate: pr[k] };
+    }
   }
+
   return null;
 }
 
@@ -64,11 +107,13 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   const range = parseMonthToRangeUTC(month);
   if (!range) return jsonError("Invalid month. Use YYYY-MM", 400);
 
+  const prevRange = getPreviousMonthRangeUTC(month);
+
   const pr: any = prisma as any;
 
-  // -------------------------
+  // --------------------------------------------------
   // 1) ORDERS
-  // -------------------------
+  // --------------------------------------------------
   const ordFound = pickRetailerOrderDelegate(pr);
   if (!ordFound) {
     return jsonError("RETAILER_ORDER_MODEL_NOT_FOUND", 500, {
@@ -77,10 +122,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
         .slice(0, 80),
     });
   }
+
   const Order = ordFound.delegate;
 
   const orders = await Order.findMany({
-    where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
+    where: {
+      retailerId,
+      createdAt: { gte: range.from, lt: range.to },
+    },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -101,33 +150,63 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
     },
   }).catch(async () => {
     return await Order.findMany({
-      where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
+      where: {
+        retailerId,
+        createdAt: { gte: range.from, lt: range.to },
+      },
       orderBy: { createdAt: "desc" },
-      select: { id: true, orderNo: true, status: true, createdAt: true, totalAmount: true },
+      select: {
+        id: true,
+        orderNo: true,
+        status: true,
+        createdAt: true,
+        totalAmount: true,
+      },
     });
   });
 
-  // -------------------------
-  // 2) ORDERED PRODUCTS AGG (from orders)
-  // -------------------------
-  const productAgg: Record<string, { productName: string; qty: number; amount: number; orders: number }> = {};
+  // --------------------------------------------------
+  // 2) ORDERED PRODUCTS AGG
+  // --------------------------------------------------
+  const productAgg: Record<
+    string,
+    { productName: string; qty: number; amount: number; orders: number }
+  > = {};
+
   for (const o of orders as any[]) {
     const items = Array.isArray((o as any).items) ? (o as any).items : [];
+
     for (const it of items) {
-      const pname = String(it.productName || "Unknown").trim();
+      const pname = cleanStr(it.productName) || "Unknown";
       const k = pname.toLowerCase();
-      if (!productAgg[k]) productAgg[k] = { productName: pname, qty: 0, amount: 0, orders: 0 };
-      productAgg[k].qty += Number(it.qty || 0);
-      productAgg[k].amount += Number(it.amount || 0);
+
+      if (!productAgg[k]) {
+        productAgg[k] = {
+          productName: pname,
+          qty: 0,
+          amount: 0,
+          orders: 0,
+        };
+      }
+
+      productAgg[k].qty += num(it.qty);
+      productAgg[k].amount += num(it.amount);
     }
-    const unique: Set<string> = new Set(items.map((x: any) => String(x?.productName || "Unknown").trim().toLowerCase()));
-    for (const k of unique) if (productAgg[k]) productAgg[k].orders += 1;
+
+    const unique = new Set<string>(
+      items.map((x: any) => (cleanStr(x?.productName) || "Unknown").toLowerCase())
+    );
+
+    for (const k of unique) {
+      if (productAgg[k]) productAgg[k].orders += 1;
+    }
   }
+
   const orderedProductsBase = Object.values(productAgg).sort((a, b) => b.amount - a.amount);
 
-  // -------------------------
-  // 3) SYSTEM PENDING STOCK (StockLot)
-  // -------------------------
+  // --------------------------------------------------
+  // 3) SYSTEM PENDING STOCK (current live stock)
+  // --------------------------------------------------
   const stockFound = pickStockLotDelegate(pr);
   let pendingByProduct: Array<{ productName: string; qtyOnHandPcs: number }> = [];
   let stockModelKey: string | null = null;
@@ -146,30 +225,36 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
     stockRowsCount = Array.isArray(rows) ? rows.length : 0;
 
     const map: Record<string, { productName: string; qtyOnHandPcs: number }> = {};
+
     for (const r of rows as any[]) {
-      const pname = String(r.productName || "Unknown").trim();
+      const pname = cleanStr(r.productName) || "Unknown";
       const k = pname.toLowerCase();
-      const q = Number(r.qtyOnHandPcs ?? r.qty ?? r.quantity ?? 0);
+      const q = num(r.qtyOnHandPcs ?? r.qty ?? r.quantity ?? 0);
+
       if (!map[k]) map[k] = { productName: pname, qtyOnHandPcs: 0 };
       map[k].qtyOnHandPcs += q;
     }
+
     pendingByProduct = Object.values(map).sort((a, b) => b.qtyOnHandPcs - a.qtyOnHandPcs);
   }
 
   const pendingIndex = new Map<string, number>();
-  for (const p of pendingByProduct) pendingIndex.set(p.productName.toLowerCase(), p.qtyOnHandPcs);
+  for (const p of pendingByProduct) {
+    pendingIndex.set(p.productName.toLowerCase(), p.qtyOnHandPcs);
+  }
 
-  // -------------------------
-  // 4) AUDIT IN MONTH (NO FALLBACK FOR QTY)
-  // -------------------------
-  // ✅ Only use month audit for sold/physical numbers
+  // --------------------------------------------------
+  // 4) CURRENT MONTH AUDIT
+  // --------------------------------------------------
   const auditInMonth = await prisma.retailerStockAudit.findFirst({
-    where: { retailerId, createdAt: { gte: range.from, lt: range.to } },
+    where: {
+      retailerId,
+      createdAt: { gte: range.from, lt: range.to },
+    },
     orderBy: { createdAt: "desc" },
     select: { id: true, createdAt: true },
   });
 
-  // ✅ latest overall only for meta display (NOT for qty calculations)
   const latestAudit = await prisma.retailerStockAudit.findFirst({
     where: { retailerId },
     orderBy: { createdAt: "desc" },
@@ -178,11 +263,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
   const auditPhysicalIndex = new Map<string, number>();
   const auditSoldIndex = new Map<string, number>();
-  const auditNameIndex = new Map<string, string>(); // ✅ preserve real casing from audit items
+  const auditNameIndex = new Map<string, string>();
   let auditItemsCount = 0;
 
   if (auditInMonth?.id) {
-    // ✅ get proper names from audit items (small query)
     const auditNameRows = await prisma.retailerStockAuditItem
       .findMany({
         where: { auditId: auditInMonth.id },
@@ -197,7 +281,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
       if (!auditNameIndex.has(k)) auditNameIndex.set(k, pn);
     }
 
-    // ✅ group sums
     const agg = await prisma.retailerStockAuditItem
       .groupBy({
         by: ["productName"],
@@ -211,108 +294,228 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
       const pn = cleanStr(r.productName) || "Unknown";
       const k = pn.toLowerCase();
 
-      const physicalSum = Number(r?._sum?.physicalQty ?? 0);
-      const soldSum = Number(r?._sum?.soldQty ?? 0);
+      const physicalSum = num(r?._sum?.physicalQty);
+      const soldSum = num(r?._sum?.soldQty);
 
-      auditPhysicalIndex.set(k, physicalSum);
-      auditSoldIndex.set(k, soldSum);
+      auditPhysicalIndex.set(k, clamp0(physicalSum));
+      auditSoldIndex.set(k, clamp0(soldSum));
 
-      // ensure name exists
       if (!auditNameIndex.has(k)) auditNameIndex.set(k, pn);
 
-      auditItemsCount += Number(r?._count?._all ?? 0);
+      auditItemsCount += num(r?._count?._all);
     }
   }
 
-  // -------------------------
-  // 5) MERGE INTO ORDERED PRODUCTS (include AUDIT-only + pending-only)
-  // -------------------------
+  // --------------------------------------------------
+  // 5) PREVIOUS MONTH AUDIT => OPENING STOCK
+  // --------------------------------------------------
+  const prevAudit =
+    prevRange
+      ? await prisma.retailerStockAudit.findFirst({
+          where: {
+            retailerId,
+            createdAt: { gte: prevRange.from, lt: prevRange.to },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, createdAt: true },
+        })
+      : null;
+
+  const prevPhysicalIndex = new Map<string, number>();
+  const prevAuditNameIndex = new Map<string, string>();
+  let prevAuditItemsCount = 0;
+
+  if (prevAudit?.id) {
+    const prevNameRows = await prisma.retailerStockAuditItem
+      .findMany({
+        where: { auditId: prevAudit.id },
+        select: { productName: true },
+        take: 5000,
+      })
+      .catch(async () => []);
+
+    for (const row of prevNameRows as any[]) {
+      const pn = cleanStr(row?.productName) || "Unknown";
+      const k = pn.toLowerCase();
+      if (!prevAuditNameIndex.has(k)) prevAuditNameIndex.set(k, pn);
+    }
+
+    const prevAgg = await prisma.retailerStockAuditItem
+      .groupBy({
+        by: ["productName"],
+        where: { auditId: prevAudit.id },
+        _sum: { physicalQty: true },
+        _count: { _all: true },
+      })
+      .catch(async () => []);
+
+    for (const r of prevAgg as any[]) {
+      const pn = cleanStr(r.productName) || "Unknown";
+      const k = pn.toLowerCase();
+      const physicalSum = num(r?._sum?.physicalQty);
+
+      prevPhysicalIndex.set(k, clamp0(physicalSum));
+      if (!prevAuditNameIndex.has(k)) prevAuditNameIndex.set(k, pn);
+
+      prevAuditItemsCount += num(r?._count?._all);
+    }
+  }
+
+  // --------------------------------------------------
+  // 6) MERGE PRODUCTS
+  // --------------------------------------------------
+  const baseMap = new Map<string, { productName: string; qty: number; amount: number; orders: number }>();
+  for (const p of orderedProductsBase) {
+    baseMap.set(p.productName.toLowerCase(), p);
+  }
+
+  const pendingMap = new Map<string, { productName: string; qtyOnHandPcs: number }>();
+  for (const p of pendingByProduct) {
+    pendingMap.set(p.productName.toLowerCase(), p);
+  }
+
   const keySet = new Set<string>();
   for (const p of orderedProductsBase) keySet.add(p.productName.toLowerCase());
   for (const k of auditPhysicalIndex.keys()) keySet.add(k);
   for (const k of pendingIndex.keys()) keySet.add(k);
+  for (const k of prevPhysicalIndex.keys()) keySet.add(k);
 
   const keys = Array.from(keySet.values());
 
   const orderedProducts = keys.map((k) => {
-    // base from orders (if exists)
-    const base = orderedProductsBase.find((x) => x.productName.toLowerCase() === k);
+    const base = baseMap.get(k);
+    const pendingRow = pendingMap.get(k);
 
     const productName =
-      base?.productName || auditNameIndex.get(k) || (pendingByProduct.find((x) => x.productName.toLowerCase() === k)?.productName ?? k);
+      base?.productName ||
+      auditNameIndex.get(k) ||
+      prevAuditNameIndex.get(k) ||
+      pendingRow?.productName ||
+      k;
 
-    const ordersCount = base?.orders || 0;
-    const orderQty = base?.qty || 0;
-    const amount = base?.amount || 0;
+    const ordersCount = num(base?.orders);
+    const orderQty = num(base?.qty);
+    const amount = num(base?.amount);
 
-    const pendingQtyPcs = pendingIndex.get(k) ?? 0;
+    const pendingQtyPcs = num(pendingIndex.get(k) ?? 0);
 
-    const auditQtyPcs = auditPhysicalIndex.get(k);
-    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcs === "number";
+    const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
+    const previousMonthPhysicalQtyPcs =
+      typeof previousMonthPhysicalQtyPcsRaw === "number"
+        ? clamp0(previousMonthPhysicalQtyPcsRaw)
+        : null;
 
-    // ✅ physical: audit > pending > null
-    const physicalQtyPcs = hasAudit
-      ? Math.max(0, Number(auditQtyPcs || 0))
-      : pendingQtyPcs > 0
-      ? pendingQtyPcs
-      : null;
+    const openingStockQtyPcs =
+      previousMonthPhysicalQtyPcs != null ? previousMonthPhysicalQtyPcs : 0;
 
-    // ✅ sold: ONLY from audit, else null (unknown)
-    const soldQtyPcs = hasAudit ? Math.max(0, Number(auditSoldIndex.get(k) ?? 0)) : null;
+    const auditQtyPcsRaw = auditPhysicalIndex.get(k);
+    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcsRaw === "number";
+    const auditQtyPcs =
+      hasAudit && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
 
-    const physicalSource = hasAudit ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE";
+    // current month physical
+    const physicalQtyPcs =
+      auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
+
+    // sold qty
+    const auditSoldRaw = auditSoldIndex.get(k);
+    const auditSoldQty =
+      hasAudit && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
+
+    const soldQtyPcs =
+      auditSoldQty != null
+        ? auditSoldQty
+        : physicalQtyPcs == null
+        ? null
+        : clamp0(openingStockQtyPcs + orderQty - physicalQtyPcs);
+
+    const physicalSource: "AUDIT" | "PENDING" | "NONE" =
+      auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE";
 
     return {
       productName,
+      openingStockQtyPcs,
+      previousMonthPhysicalQtyPcs,
+
       orders: ordersCount,
       qty: orderQty,
       amount,
 
       pendingQtyPcs,
       soldQtyPcs,
-      auditQtyPcs: hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : null,
+      auditQtyPcs,
       physicalQtyPcs,
       physicalSource,
     };
   });
 
-  // ✅ sort: ordered first, then audit-only, then pending-only
   orderedProducts.sort((a: any, b: any) => {
-    const aHasOrder = (a.amount || 0) > 0 || (a.qty || 0) > 0 || (a.orders || 0) > 0;
-    const bHasOrder = (b.amount || 0) > 0 || (b.qty || 0) > 0 || (b.orders || 0) > 0;
+    const aHasOrder = num(a.amount) > 0 || num(a.qty) > 0 || num(a.orders) > 0;
+    const bHasOrder = num(b.amount) > 0 || num(b.qty) > 0 || num(b.orders) > 0;
     if (aHasOrder !== bHasOrder) return aHasOrder ? -1 : 1;
+
+    const aHasOpening = num(a.openingStockQtyPcs) > 0;
+    const bHasOpening = num(b.openingStockQtyPcs) > 0;
+    if (aHasOpening !== bHasOpening) return aHasOpening ? -1 : 1;
 
     const aHasAudit = a.auditQtyPcs != null;
     const bHasAudit = b.auditQtyPcs != null;
     if (aHasAudit !== bHasAudit) return aHasAudit ? -1 : 1;
 
-    return (b.amount || 0) - (a.amount || 0) || (b.qty || 0) - (a.qty || 0);
+    return num(b.amount) - num(a.amount) || num(b.qty) - num(a.qty);
   });
 
+  // --------------------------------------------------
+  // 7) PENDING STOCK LIST
+  // --------------------------------------------------
   const pendingStock = pendingByProduct.map((p) => {
     const k = p.productName.toLowerCase();
-    const pendingQtyPcs = p.qtyOnHandPcs;
+    const pendingQtyPcs = num(p.qtyOnHandPcs);
 
-    const auditQtyPcs = auditPhysicalIndex.get(k);
-    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcs === "number";
+    const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
+    const previousMonthPhysicalQtyPcs =
+      typeof previousMonthPhysicalQtyPcsRaw === "number"
+        ? clamp0(previousMonthPhysicalQtyPcsRaw)
+        : null;
 
-    const physicalQtyPcs = hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : pendingQtyPcs > 0 ? pendingQtyPcs : null;
-    const soldQtyPcs = hasAudit ? Math.max(0, Number(auditSoldIndex.get(k) ?? 0)) : null;
+    const openingStockQtyPcs =
+      previousMonthPhysicalQtyPcs != null ? previousMonthPhysicalQtyPcs : 0;
+
+    const auditQtyPcsRaw = auditPhysicalIndex.get(k);
+    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcsRaw === "number";
+    const auditQtyPcs =
+      hasAudit && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
+
+    const physicalQtyPcs =
+      auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
+
+    const auditSoldRaw = auditSoldIndex.get(k);
+    const auditSoldQty =
+      hasAudit && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
+
+    const soldQtyPcs =
+      auditSoldQty != null
+        ? auditSoldQty
+        : physicalQtyPcs == null
+        ? null
+        : clamp0(openingStockQtyPcs - physicalQtyPcs);
 
     return {
       ...p,
-      auditQtyPcs: hasAudit ? Math.max(0, Number(auditQtyPcs || 0)) : null,
+      openingStockQtyPcs,
+      previousMonthPhysicalQtyPcs,
+      auditQtyPcs,
       physicalQtyPcs,
       soldQtyPcs,
-      physicalSource: hasAudit ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
+      physicalSource: auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
     };
   });
 
-  // -------------------------
-  // SUMMARY
-  // -------------------------
+  // --------------------------------------------------
+  // 8) SUMMARY
+  // --------------------------------------------------
   const totalOrders = (orders as any[]).length;
-  const totalSales = (orders as any[]).reduce((a, o: any) => a + Number(o?.totalAmount || 0), 0);
+  const totalSales = (orders as any[]).reduce((a, o: any) => a + num(o?.totalAmount), 0);
 
   return NextResponse.json({
     ok: true,
@@ -322,17 +525,26 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
       stockModelKey,
       stockRowsCount,
       hasPendingStock: pendingByProduct.length > 0,
-      range: { from: range.from.toISOString(), to: range.to.toISOString() },
+      range: {
+        from: range.from.toISOString(),
+        to: range.to.toISOString(),
+      },
 
-      // ✅ month audit
+      // current month audit
       auditId: auditInMonth?.id || null,
       auditAt: auditInMonth?.createdAt ? new Date(auditInMonth.createdAt).toISOString() : null,
       auditItemsCount,
       auditFoundInMonth: !!auditInMonth?.id,
 
-      // ✅ latest audit (display-only)
+      // latest audit
       latestAuditId: latestAudit?.id || null,
       latestAuditAt: latestAudit?.createdAt ? new Date(latestAudit.createdAt).toISOString() : null,
+
+      // previous month audit
+      previousMonth: prevRange?.month || null,
+      previousAuditId: prevAudit?.id || null,
+      previousAuditAt: prevAudit?.createdAt ? new Date(prevAudit.createdAt).toISOString() : null,
+      previousAuditItemsCount: prevAuditItemsCount,
     },
     summary: {
       totalOrders,
