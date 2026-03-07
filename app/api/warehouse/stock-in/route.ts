@@ -21,6 +21,12 @@ function parseDate(v: any) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function parseQty(v: any) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.floor(n);
+}
+
 function statusFromAuth(auth: any) {
   const s = Number(auth?.status);
   return Number.isFinite(s) && s >= 100 ? s : 401;
@@ -35,11 +41,11 @@ function isAllowedRole(role: any) {
 }
 
 /**
- * ✅ GET = list company stock lots
+ * GET = list company stock lots
  * URL: /api/warehouse/stock-in?take=200
  */
 export async function GET(req: Request) {
-  const auth = await requireWarehouse(); // ✅ no args (fixes TS)
+  const auth = await requireWarehouse();
   if (!auth?.ok) {
     return NextResponse.json(
       { ok: false, error: auth?.error || "UNAUTHORIZED" },
@@ -47,7 +53,6 @@ export async function GET(req: Request) {
     );
   }
 
-  // ✅ role gate (WAREHOUSE_MANAGER / ADMIN)
   if (!isAllowedRole((auth as any).role)) return forbidden();
 
   const url = new URL(req.url);
@@ -70,11 +75,12 @@ export async function GET(req: Request) {
 }
 
 /**
- * ✅ POST = add new batch (every time NEW batchNo)
+ * POST = add new batch
  * URL: /api/warehouse/stock-in
+ * Body: { productName, batchNo, mfgDate, expDate, qty }
  */
 export async function POST(req: Request) {
-  const auth = await requireWarehouse(); // ✅ no args (fixes TS)
+  const auth = await requireWarehouse();
   if (!auth?.ok) {
     return NextResponse.json(
       { ok: false, error: auth?.error || "UNAUTHORIZED" },
@@ -82,7 +88,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // ✅ role gate (WAREHOUSE_MANAGER / ADMIN)
   if (!isAllowedRole((auth as any).role)) return forbidden();
 
   try {
@@ -93,21 +98,35 @@ export async function POST(req: Request) {
 
     const productName = cleanStr(body.productName);
     const batchNo = cleanStr(body.batchNo);
-
-    const qtyNum = Number(body.qty ?? 0);
-    const qty = Number.isFinite(qtyNum) ? Math.floor(qtyNum) : 0;
-
     const mfgDate = parseDate(body.mfgDate);
     const expDate = parseDate(body.expDate);
+    const qty = parseQty(body.qty);
 
-    if (!productName) return NextResponse.json({ ok: false, error: "productName required" }, { status: 400 });
-    if (!batchNo) return NextResponse.json({ ok: false, error: "batchNo required" }, { status: 400 });
-    if (!expDate) return NextResponse.json({ ok: false, error: "Invalid expDate" }, { status: 400 });
-    if (qty <= 0) return NextResponse.json({ ok: false, error: "qty must be > 0" }, { status: 400 });
+    if (!productName) {
+      return NextResponse.json({ ok: false, error: "productName required" }, { status: 400 });
+    }
 
-    // optional: expDate must be after mfgDate if both exist
-    if (mfgDate && expDate.getTime() <= mfgDate.getTime()) {
-      return NextResponse.json({ ok: false, error: "expDate must be after mfgDate" }, { status: 400 });
+    if (!batchNo) {
+      return NextResponse.json({ ok: false, error: "batchNo required" }, { status: 400 });
+    }
+
+    if (!mfgDate) {
+      return NextResponse.json({ ok: false, error: "Invalid mfgDate" }, { status: 400 });
+    }
+
+    if (!expDate) {
+      return NextResponse.json({ ok: false, error: "Invalid expDate" }, { status: 400 });
+    }
+
+    if (expDate.getTime() <= mfgDate.getTime()) {
+      return NextResponse.json(
+        { ok: false, error: "expDate must be after mfgDate" },
+        { status: 400 }
+      );
+    }
+
+    if (qty <= 0) {
+      return NextResponse.json({ ok: false, error: "qty must be > 0" }, { status: 400 });
     }
 
     const row = await prisma.stockLot.create({
@@ -138,9 +157,9 @@ export async function POST(req: Request) {
 }
 
 /**
- * ✅ PATCH = FIX wrong productName for an existing lot
+ * PATCH = edit existing stock lot
  * URL: /api/warehouse/stock-in
- * Body: { id: "...", productName: "Correct Name" }
+ * Body: { id, productName, batchNo, mfgDate, expDate, qty }
  */
 export async function PATCH(req: Request) {
   const auth = await requireWarehouse();
@@ -161,22 +180,95 @@ export async function PATCH(req: Request) {
 
     const id = cleanStr(body.id);
     const productName = cleanStr(body.productName);
+    const batchNo = cleanStr(body.batchNo);
+    const mfgDate = parseDate(body.mfgDate);
+    const expDate = parseDate(body.expDate);
+    const qty = parseQty(body.qty);
 
-    if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
-    if (!productName) return NextResponse.json({ ok: false, error: "productName required" }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+    }
 
-    // Optional safety: ensure lot exists
-    const exists = await prisma.stockLot.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) return NextResponse.json({ ok: false, error: "Stock lot not found" }, { status: 404 });
+    if (!productName) {
+      return NextResponse.json({ ok: false, error: "productName required" }, { status: 400 });
+    }
+
+    if (!batchNo) {
+      return NextResponse.json({ ok: false, error: "batchNo required" }, { status: 400 });
+    }
+
+    if (!mfgDate) {
+      return NextResponse.json({ ok: false, error: "Invalid mfgDate" }, { status: 400 });
+    }
+
+    if (!expDate) {
+      return NextResponse.json({ ok: false, error: "Invalid expDate" }, { status: 400 });
+    }
+
+    if (expDate.getTime() <= mfgDate.getTime()) {
+      return NextResponse.json(
+        { ok: false, error: "expDate must be after mfgDate" },
+        { status: 400 }
+      );
+    }
+
+    if (qty <= 0) {
+      return NextResponse.json({ ok: false, error: "qty must be > 0" }, { status: 400 });
+    }
+
+    const exists = await prisma.stockLot.findFirst({
+      where: {
+        id,
+        ownerType: "COMPANY",
+        ownerId: null,
+      },
+      select: {
+        id: true,
+        batchNo: true,
+      },
+    });
+
+    if (!exists) {
+      return NextResponse.json({ ok: false, error: "Stock lot not found" }, { status: 404 });
+    }
+
+    const duplicateBatch = await prisma.stockLot.findFirst({
+      where: {
+        batchNo,
+        id: { not: id },
+      },
+      select: { id: true },
+    });
+
+    if (duplicateBatch) {
+      return NextResponse.json(
+        { ok: false, error: "Batch No already exists. Different batch number use karo." },
+        { status: 409 }
+      );
+    }
 
     const row = await prisma.stockLot.update({
       where: { id },
-      data: { productName },
+      data: {
+        productName,
+        batchNo,
+        mfgDate,
+        expDate,
+        qtyOnHandPcs: qty,
+      },
     });
 
     return NextResponse.json({ ok: true, stock: row }, { status: 200 });
   } catch (e: any) {
     const msg = String(e?.message || "");
+
+    if (msg.includes("P2002") || msg.toLowerCase().includes("unique")) {
+      return NextResponse.json(
+        { ok: false, error: "Batch No already exists. Different batch number use karo." },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json({ ok: false, error: msg || "Server error" }, { status: 500 });
   }
 }
