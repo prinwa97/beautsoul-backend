@@ -55,6 +55,12 @@ function clamp0(v: number) {
   return v < 0 ? 0 : v;
 }
 
+function toOptionalNumber(v: any): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function pickRetailerOrderDelegate(pr: any) {
   const candidates = ["retailerOrder", "retailerOrders", "order", "orders"];
   for (const k of candidates) {
@@ -304,6 +310,8 @@ export async function GET(
     select: { id: true, createdAt: true },
   });
 
+  const hasAuditInMonth = !!auditInMonth?.id;
+
   const auditPhysicalIndex = new Map<string, number>();
   const auditSoldIndex = new Map<string, number>();
   const auditNameIndex = new Map<string, string>();
@@ -337,11 +345,15 @@ export async function GET(
       const pn = cleanStr(r.productName) || "Unknown";
       const k = pn.toLowerCase();
 
-      const physicalSum = num(r?._sum?.physicalQty);
-      const soldSum = num(r?._sum?.soldQty);
+      const physicalRaw = toOptionalNumber(r?._sum?.physicalQty);
+      const soldRaw = toOptionalNumber(r?._sum?.soldQty);
 
-      auditPhysicalIndex.set(k, clamp0(physicalSum));
-      auditSoldIndex.set(k, clamp0(soldSum));
+      auditPhysicalIndex.set(k, clamp0(physicalRaw ?? 0));
+
+      // soldQty tabhi set karo jab actually value present ho
+      if (soldRaw !== null) {
+        auditSoldIndex.set(k, clamp0(soldRaw));
+      }
 
       if (!auditNameIndex.has(k)) auditNameIndex.set(k, pn);
 
@@ -394,9 +406,9 @@ export async function GET(
     for (const r of prevAgg as any[]) {
       const pn = cleanStr(r.productName) || "Unknown";
       const k = pn.toLowerCase();
-      const physicalSum = num(r?._sum?.physicalQty);
+      const physicalRaw = toOptionalNumber(r?._sum?.physicalQty);
 
-      prevPhysicalIndex.set(k, clamp0(physicalSum));
+      prevPhysicalIndex.set(k, clamp0(physicalRaw ?? 0));
       if (!prevAuditNameIndex.has(k)) prevAuditNameIndex.set(k, pn);
 
       prevAuditItemsCount += num(r?._count?._all);
@@ -433,7 +445,8 @@ export async function GET(
     for (const r of prevPrevAgg as any[]) {
       const pn = cleanStr(r.productName) || "Unknown";
       const k = pn.toLowerCase();
-      prevPrevPhysicalIndex.set(k, clamp0(num(r?._sum?.physicalQty)));
+      const physicalRaw = toOptionalNumber(r?._sum?.physicalQty);
+      prevPrevPhysicalIndex.set(k, clamp0(physicalRaw ?? 0));
     }
   }
 
@@ -459,9 +472,13 @@ export async function GET(
   for (const p of orderedProductsBase) keySet.add(p.productName.toLowerCase());
   for (const p of prevOrderedProductsBase) keySet.add(p.productName.toLowerCase());
   for (const k of auditPhysicalIndex.keys()) keySet.add(k);
-  for (const k of pendingIndex.keys()) keySet.add(k);
   for (const k of prevPhysicalIndex.keys()) keySet.add(k);
   for (const k of prevPrevPhysicalIndex.keys()) keySet.add(k);
+
+  // current pending ko sirf tab include karo jab current month audit NA ho
+  if (!hasAuditInMonth) {
+    for (const k of pendingIndex.keys()) keySet.add(k);
+  }
 
   const keys = Array.from(keySet.values());
 
@@ -478,36 +495,24 @@ export async function GET(
       pendingRow?.productName ||
       k;
 
-    // current month
     const ordersCount = num(base?.orders);
     const orderQty = num(base?.qty);
     const amount = num(base?.amount);
 
-    // current live pending
     const pendingQtyPcs = num(pendingIndex.get(k) ?? 0);
 
-    // previous month verified physical
     const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
     const previousMonthPhysicalQtyPcs =
       typeof previousMonthPhysicalQtyPcsRaw === "number"
         ? clamp0(previousMonthPhysicalQtyPcsRaw)
         : null;
 
-    // previous month order qty
     const prevOrderQty = num(prevBase?.qty);
 
-    // older audit before previous month (used only if prev month audit missing)
     const prevPrevPhysical = prevPrevPhysicalIndex.has(k)
       ? clamp0(num(prevPrevPhysicalIndex.get(k)))
       : null;
 
-    // professional opening logic:
-    // 1. previous month audit physical
-    // 2. previous month estimated closing:
-    //    (older audit opening + prev month orders - current pending)
-    // 3. previous month current pending
-    // 4. prev month opening + prev month orders
-    // 5. 0
     let openingStockQtyPcs = 0;
     let openingSource:
       | "PREVIOUS_AUDIT"
@@ -528,7 +533,7 @@ export async function GET(
       if (prevEstimatedFromOlderAudit != null) {
         openingStockQtyPcs = prevEstimatedFromOlderAudit;
         openingSource = "PREVIOUS_ESTIMATED_CLOSING";
-      } else if (pendingQtyPcs > 0) {
+      } else if (!hasAuditInMonth && pendingQtyPcs > 0) {
         openingStockQtyPcs = pendingQtyPcs;
         openingSource = "PENDING_FALLBACK";
       } else if (prevOrderQty > 0) {
@@ -540,19 +545,24 @@ export async function GET(
       }
     }
 
-    // current month audit / physical
     const auditQtyPcsRaw = auditPhysicalIndex.get(k);
-    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcsRaw === "number";
     const auditQtyPcs =
-      hasAudit && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
+      hasAuditInMonth && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
 
+    // IMPORTANT:
+    // audit month me pending fallback mat use karo
     const physicalQtyPcs =
-      auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
+      hasAuditInMonth
+        ? auditQtyPcs
+        : auditQtyPcs != null
+        ? auditQtyPcs
+        : pendingQtyPcs > 0
+        ? pendingQtyPcs
+        : null;
 
-    // sold
     const auditSoldRaw = auditSoldIndex.get(k);
     const auditSoldQty =
-      hasAudit && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
+      hasAuditInMonth && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
 
     const soldQtyPcs =
       auditSoldQty != null
@@ -565,19 +575,24 @@ export async function GET(
       auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
 
     const physicalSource: "AUDIT" | "PENDING" | "NONE" =
-      auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE";
+      hasAuditInMonth
+        ? auditQtyPcs != null
+          ? "AUDIT"
+          : "NONE"
+        : auditQtyPcs != null
+        ? "AUDIT"
+        : pendingQtyPcs > 0
+        ? "PENDING"
+        : "NONE";
 
     return {
       productName,
-
       openingStockQtyPcs,
       openingSource,
       previousMonthPhysicalQtyPcs,
-
       orders: ordersCount,
       qty: orderQty,
       amount,
-
       pendingQtyPcs,
       soldQtyPcs,
       soldSource,
@@ -606,88 +621,89 @@ export async function GET(
   // --------------------------------------------------
   // 9) PENDING STOCK LIST
   // --------------------------------------------------
-  const pendingStock = pendingByProduct.map((p) => {
-    const k = p.productName.toLowerCase();
-    const pendingQtyPcs = num(p.qtyOnHandPcs);
+  const pendingStock = hasAuditInMonth
+    ? []
+    : pendingByProduct.map((p) => {
+        const k = p.productName.toLowerCase();
+        const pendingQtyPcs = num(p.qtyOnHandPcs);
 
-    const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
-    const previousMonthPhysicalQtyPcs =
-      typeof previousMonthPhysicalQtyPcsRaw === "number"
-        ? clamp0(previousMonthPhysicalQtyPcsRaw)
-        : null;
+        const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
+        const previousMonthPhysicalQtyPcs =
+          typeof previousMonthPhysicalQtyPcsRaw === "number"
+            ? clamp0(previousMonthPhysicalQtyPcsRaw)
+            : null;
 
-    const prevOrderQty = num(prevBaseMap.get(k)?.qty);
+        const prevOrderQty = num(prevBaseMap.get(k)?.qty);
 
-    const prevPrevPhysical = prevPrevPhysicalIndex.has(k)
-      ? clamp0(num(prevPrevPhysicalIndex.get(k)))
-      : null;
-
-    let openingStockQtyPcs = 0;
-    let openingSource:
-      | "PREVIOUS_AUDIT"
-      | "PREVIOUS_ESTIMATED_CLOSING"
-      | "PENDING_FALLBACK"
-      | "OPENING_PLUS_ORDERS"
-      | "NONE" = "NONE";
-
-    if (previousMonthPhysicalQtyPcs != null) {
-      openingStockQtyPcs = previousMonthPhysicalQtyPcs;
-      openingSource = "PREVIOUS_AUDIT";
-    } else {
-      const prevEstimatedFromOlderAudit =
-        prevPrevPhysical != null
-          ? clamp0(prevPrevPhysical + prevOrderQty - pendingQtyPcs)
+        const prevPrevPhysical = prevPrevPhysicalIndex.has(k)
+          ? clamp0(num(prevPrevPhysicalIndex.get(k)))
           : null;
 
-      if (prevEstimatedFromOlderAudit != null) {
-        openingStockQtyPcs = prevEstimatedFromOlderAudit;
-        openingSource = "PREVIOUS_ESTIMATED_CLOSING";
-      } else if (pendingQtyPcs > 0) {
-        openingStockQtyPcs = pendingQtyPcs;
-        openingSource = "PENDING_FALLBACK";
-      } else if (prevOrderQty > 0) {
-        openingStockQtyPcs = prevOrderQty;
-        openingSource = "OPENING_PLUS_ORDERS";
-      } else {
-        openingStockQtyPcs = 0;
-        openingSource = "NONE";
-      }
-    }
+        let openingStockQtyPcs = 0;
+        let openingSource:
+          | "PREVIOUS_AUDIT"
+          | "PREVIOUS_ESTIMATED_CLOSING"
+          | "PENDING_FALLBACK"
+          | "OPENING_PLUS_ORDERS"
+          | "NONE" = "NONE";
 
-    const auditQtyPcsRaw = auditPhysicalIndex.get(k);
-    const hasAudit = !!auditInMonth?.id && typeof auditQtyPcsRaw === "number";
-    const auditQtyPcs =
-      hasAudit && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
+        if (previousMonthPhysicalQtyPcs != null) {
+          openingStockQtyPcs = previousMonthPhysicalQtyPcs;
+          openingSource = "PREVIOUS_AUDIT";
+        } else {
+          const prevEstimatedFromOlderAudit =
+            prevPrevPhysical != null
+              ? clamp0(prevPrevPhysical + prevOrderQty - pendingQtyPcs)
+              : null;
 
-    const physicalQtyPcs =
-      auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
+          if (prevEstimatedFromOlderAudit != null) {
+            openingStockQtyPcs = prevEstimatedFromOlderAudit;
+            openingSource = "PREVIOUS_ESTIMATED_CLOSING";
+          } else if (pendingQtyPcs > 0) {
+            openingStockQtyPcs = pendingQtyPcs;
+            openingSource = "PENDING_FALLBACK";
+          } else if (prevOrderQty > 0) {
+            openingStockQtyPcs = prevOrderQty;
+            openingSource = "OPENING_PLUS_ORDERS";
+          } else {
+            openingStockQtyPcs = 0;
+            openingSource = "NONE";
+          }
+        }
 
-    const auditSoldRaw = auditSoldIndex.get(k);
-    const auditSoldQty =
-      hasAudit && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
+        const auditQtyPcsRaw = auditPhysicalIndex.get(k);
+        const auditQtyPcs =
+          hasAuditInMonth && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
 
-    const soldQtyPcs =
-      auditSoldQty != null
-        ? auditSoldQty
-        : physicalQtyPcs == null
-        ? null
-        : clamp0(openingStockQtyPcs - physicalQtyPcs);
+        const physicalQtyPcs =
+          auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
 
-    const soldSource: "AUDIT" | "FORMULA" | "NONE" =
-      auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
+        const auditSoldRaw = auditSoldIndex.get(k);
+        const auditSoldQty =
+          hasAuditInMonth && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
 
-    return {
-      ...p,
-      openingStockQtyPcs,
-      openingSource,
-      previousMonthPhysicalQtyPcs,
-      auditQtyPcs,
-      physicalQtyPcs,
-      soldQtyPcs,
-      soldSource,
-      physicalSource: auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
-    };
-  });
+        const soldQtyPcs =
+          auditSoldQty != null
+            ? auditSoldQty
+            : physicalQtyPcs == null
+            ? null
+            : clamp0(openingStockQtyPcs - physicalQtyPcs);
+
+        const soldSource: "AUDIT" | "FORMULA" | "NONE" =
+          auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
+
+        return {
+          ...p,
+          openingStockQtyPcs,
+          openingSource,
+          previousMonthPhysicalQtyPcs,
+          auditQtyPcs,
+          physicalQtyPcs,
+          soldQtyPcs,
+          soldSource,
+          physicalSource: auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
+        };
+      });
 
   // --------------------------------------------------
   // 10) SUMMARY
@@ -703,30 +719,27 @@ export async function GET(
       stockModelKey,
       stockRowsCount,
       hasPendingStock: pendingByProduct.length > 0,
+      hasAuditInMonth,
       range: {
         from: range.from.toISOString(),
         to: range.to.toISOString(),
       },
-
       auditId: auditInMonth?.id || null,
       auditAt: auditInMonth?.createdAt
         ? new Date(auditInMonth.createdAt).toISOString()
         : null,
       auditItemsCount,
       auditFoundInMonth: !!auditInMonth?.id,
-
       latestAuditId: latestAudit?.id || null,
       latestAuditAt: latestAudit?.createdAt
         ? new Date(latestAudit.createdAt).toISOString()
         : null,
-
       previousMonth: prevRange?.month || null,
       previousAuditId: prevAudit?.id || null,
       previousAuditAt: prevAudit?.createdAt
         ? new Date(prevAudit.createdAt).toISOString()
         : null,
       previousAuditItemsCount: prevAuditItemsCount,
-
       previousPreviousMonth: prevPrevRange?.month || null,
       previousPreviousAuditId: prevPrevAudit?.id || null,
       previousPreviousAuditAt: prevPrevAudit?.createdAt
