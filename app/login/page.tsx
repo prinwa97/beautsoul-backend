@@ -25,7 +25,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        credentials: "include", // cookie save + send
+        credentials: "include",
         body: JSON.stringify({ phone: only10Digits(phone), password }),
       });
 
@@ -37,16 +37,15 @@ export default function LoginPage() {
         return;
       }
 
-      // ✅ role-based redirect
       const role = data?.user?.role;
-if (role === "ADMIN") router.replace("/admin/products");
-else if (role === "WAREHOUSE_MANAGER") router.replace("/warehouse/dashboard");
-else if (role === "DISTRIBUTOR") router.replace("/distributor/dashboard");
-else if (role === "SALES_MANAGER") router.replace("/sales-manager/dashboard");
-else if (role === "STATE_BUSINESS_HEAD") router.replace("/state-head");
-else if (role === "FIELD_OFFICER") router.replace("/field-officer/orders");
-else if (role === "RETAILER") router.replace("/retailer");
-else router.replace("/");
+      if (role === "ADMIN") router.replace("/admin/products");
+      else if (role === "WAREHOUSE_MANAGER") router.replace("/warehouse/dashboard");
+      else if (role === "DISTRIBUTOR") router.replace("/distributor/dashboard");
+      else if (role === "SALES_MANAGER") router.replace("/sales-manager/dashboard");
+      else if (role === "STATE_BUSINESS_HEAD") router.replace("/state-head");
+      else if (role === "FIELD_OFFICER") router.replace("/field-officer/orders");
+      else if (role === "RETAILER") router.replace("/retailer");
+      else router.replace("/");
 
       router.refresh();
     } catch (err: unknown) {
@@ -56,15 +55,23 @@ else router.replace("/");
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#fff7f6] p-6">
+    <div className="relative min-h-screen flex items-center justify-center bg-[#fff7f6] p-6">
+      <img
+        src="/icons/icon-192.png"
+        alt="BeautSoul"
+        className="absolute top-6 left-6 h-16 w-auto object-contain"
+      />
+
       <form onSubmit={submit} className="w-full max-w-sm bg-white border rounded-2xl p-6 shadow">
         <h1 className="text-xl font-bold">BeautSoul Login</h1>
         <p className="text-sm text-gray-600 mt-1">Enter phone & password</p>
 
         {msg && (
-          <div className={`mt-4 p-3 rounded-xl text-sm font-semibold border ${
-            msg.type === "ok" ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
-          }`}>
+          <div
+            className={`mt-4 p-3 rounded-xl text-sm font-semibold border ${
+              msg.type === "ok" ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
+            }`}
+          >
             {msg.text}
           </div>
         )}

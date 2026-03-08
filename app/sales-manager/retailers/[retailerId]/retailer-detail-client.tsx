@@ -512,7 +512,7 @@ function MonthModal({
                   </div>
 
                   <div className="mt-3 overflow-x-auto rounded-2xl border bg-white">
-                    <table className="min-w-[1200px] w-full text-[13px]">
+                   <table className="min-w-[980px] w-full text-[13px]">
                       <thead className="border-b bg-gray-50">
                         <tr className="text-left">
                           <TH>Product</TH>
@@ -688,7 +688,11 @@ function TH({
   children: any;
   className?: string;
 }) {
-  return <th className={["px-4 py-3 font-black", className].join(" ")}>{children}</th>;
+  return (
+    <th className={["px-2 py-2 font-black whitespace-nowrap", className].join(" ")}>
+      {children}
+    </th>
+  );
 }
 
 function TD({
@@ -701,7 +705,10 @@ function TD({
   colSpan?: number;
 }) {
   return (
-    <td colSpan={colSpan} className={["px-4 py-3 align-top", className].join(" ")}>
+    <td
+      colSpan={colSpan}
+      className={["px-2 py-2 align-top whitespace-nowrap", className].join(" ")}
+    >
       {children}
     </td>
   );

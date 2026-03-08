@@ -9,7 +9,6 @@ function jsonError(msg: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: msg, ...extra }, { status });
 }
 
-// current month UTC range
 function parseMonthToRangeUTC(month: string) {
   const m = String(month || "").trim();
   if (!/^\d{4}-\d{2}$/.test(m)) return null;
@@ -19,10 +18,9 @@ function parseMonthToRangeUTC(month: string) {
 
   const from = new Date(Date.UTC(yy, mm - 1, 1, 0, 0, 0));
   const to = new Date(Date.UTC(yy, mm, 1, 0, 0, 0));
-  return { from, to };
+  return { from, to, month: `${yy}-${String(mm).padStart(2, "0")}` };
 }
 
-// previous month UTC range
 function getPreviousMonthRangeUTC(month: string) {
   const m = String(month || "").trim();
   if (!/^\d{4}-\d{2}$/.test(m)) return null;
@@ -95,7 +93,52 @@ function pickStockLotDelegate(pr: any) {
   return null;
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ retailerId: string }> }) {
+type ProductAggRow = {
+  productName: string;
+  qty: number;
+  amount: number;
+  orders: number;
+};
+
+function buildProductAggFromOrders(orders: any[]): ProductAggRow[] {
+  const productAgg: Record<string, ProductAggRow> = {};
+
+  for (const o of orders as any[]) {
+    const items = Array.isArray((o as any).items) ? (o as any).items : [];
+
+    for (const it of items) {
+      const pname = cleanStr(it.productName) || "Unknown";
+      const k = pname.toLowerCase();
+
+      if (!productAgg[k]) {
+        productAgg[k] = {
+          productName: pname,
+          qty: 0,
+          amount: 0,
+          orders: 0,
+        };
+      }
+
+      productAgg[k].qty += num(it.qty);
+      productAgg[k].amount += num(it.amount);
+    }
+
+    const unique = new Set<string>(
+      items.map((x: any) => (cleanStr(x?.productName) || "Unknown").toLowerCase())
+    );
+
+    for (const k of unique) {
+      if (productAgg[k]) productAgg[k].orders += 1;
+    }
+  }
+
+  return Object.values(productAgg).sort((a, b) => b.amount - a.amount);
+}
+
+export async function GET(
+  req: Request,
+  ctx: { params: Promise<{ retailerId: string }> }
+) {
   const auth = await requireSalesManager(["SALES_MANAGER", "ADMIN"]);
   if (!auth.ok) return jsonError(auth.error || "UNAUTHORIZED", auth.status || 401);
 
@@ -104,15 +147,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
   const { searchParams } = new URL(req.url);
   const month = searchParams.get("month") || "";
+
   const range = parseMonthToRangeUTC(month);
   if (!range) return jsonError("Invalid month. Use YYYY-MM", 400);
 
   const prevRange = getPreviousMonthRangeUTC(month);
-
   const pr: any = prisma as any;
 
   // --------------------------------------------------
-  // 1) ORDERS
+  // 1) ORDER MODEL
   // --------------------------------------------------
   const ordFound = pickRetailerOrderDelegate(pr);
   if (!ordFound) {
@@ -125,6 +168,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
   const Order = ordFound.delegate;
 
+  // --------------------------------------------------
+  // 2) CURRENT MONTH ORDERS
+  // --------------------------------------------------
   const orders = await Order.findMany({
     where: {
       retailerId,
@@ -165,47 +211,44 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
     });
   });
 
+  const orderedProductsBase = buildProductAggFromOrders(orders as any[]);
+
   // --------------------------------------------------
-  // 2) ORDERED PRODUCTS AGG
+  // 3) PREVIOUS MONTH ORDERS
   // --------------------------------------------------
-  const productAgg: Record<
-    string,
-    { productName: string; qty: number; amount: number; orders: number }
-  > = {};
+  let prevMonthOrders: any[] = [];
+  let prevOrderedProductsBase: ProductAggRow[] = [];
 
-  for (const o of orders as any[]) {
-    const items = Array.isArray((o as any).items) ? (o as any).items : [];
+  if (prevRange) {
+    prevMonthOrders = await Order.findMany({
+      where: {
+        retailerId,
+        createdAt: { gte: prevRange.from, lt: prevRange.to },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        orderNo: true,
+        status: true,
+        createdAt: true,
+        totalAmount: true,
+        items: {
+          select: {
+            id: true,
+            productName: true,
+            qty: true,
+            rate: true,
+            amount: true,
+          },
+        },
+      },
+    }).catch(async () => []);
 
-    for (const it of items) {
-      const pname = cleanStr(it.productName) || "Unknown";
-      const k = pname.toLowerCase();
-
-      if (!productAgg[k]) {
-        productAgg[k] = {
-          productName: pname,
-          qty: 0,
-          amount: 0,
-          orders: 0,
-        };
-      }
-
-      productAgg[k].qty += num(it.qty);
-      productAgg[k].amount += num(it.amount);
-    }
-
-    const unique = new Set<string>(
-      items.map((x: any) => (cleanStr(x?.productName) || "Unknown").toLowerCase())
-    );
-
-    for (const k of unique) {
-      if (productAgg[k]) productAgg[k].orders += 1;
-    }
+    prevOrderedProductsBase = buildProductAggFromOrders(prevMonthOrders as any[]);
   }
 
-  const orderedProductsBase = Object.values(productAgg).sort((a, b) => b.amount - a.amount);
-
   // --------------------------------------------------
-  // 3) SYSTEM PENDING STOCK (current live stock)
+  // 4) SYSTEM PENDING STOCK (CURRENT LIVE STOCK)
   // --------------------------------------------------
   const stockFound = pickStockLotDelegate(pr);
   let pendingByProduct: Array<{ productName: string; qtyOnHandPcs: number }> = [];
@@ -244,7 +287,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   }
 
   // --------------------------------------------------
-  // 4) CURRENT MONTH AUDIT
+  // 5) CURRENT MONTH AUDIT
   // --------------------------------------------------
   const auditInMonth = await prisma.retailerStockAudit.findFirst({
     where: {
@@ -307,19 +350,18 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   }
 
   // --------------------------------------------------
-  // 5) PREVIOUS MONTH AUDIT => OPENING STOCK
+  // 6) PREVIOUS MONTH AUDIT
   // --------------------------------------------------
-  const prevAudit =
-    prevRange
-      ? await prisma.retailerStockAudit.findFirst({
-          where: {
-            retailerId,
-            createdAt: { gte: prevRange.from, lt: prevRange.to },
-          },
-          orderBy: { createdAt: "desc" },
-          select: { id: true, createdAt: true },
-        })
-      : null;
+  const prevAudit = prevRange
+    ? await prisma.retailerStockAudit.findFirst({
+        where: {
+          retailerId,
+          createdAt: { gte: prevRange.from, lt: prevRange.to },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, createdAt: true },
+      })
+    : null;
 
   const prevPhysicalIndex = new Map<string, number>();
   const prevAuditNameIndex = new Map<string, string>();
@@ -362,9 +404,48 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   }
 
   // --------------------------------------------------
-  // 6) MERGE PRODUCTS
+  // 7) PREVIOUS MONTH OPENING ESTIMATE BASE
   // --------------------------------------------------
-  const baseMap = new Map<string, { productName: string; qty: number; amount: number; orders: number }>();
+  const prevPrevRange = prevRange ? getPreviousMonthRangeUTC(prevRange.month) : null;
+
+  const prevPrevAudit = prevPrevRange
+    ? await prisma.retailerStockAudit.findFirst({
+        where: {
+          retailerId,
+          createdAt: { gte: prevPrevRange.from, lt: prevPrevRange.to },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, createdAt: true },
+      })
+    : null;
+
+  const prevPrevPhysicalIndex = new Map<string, number>();
+
+  if (prevPrevAudit?.id) {
+    const prevPrevAgg = await prisma.retailerStockAuditItem
+      .groupBy({
+        by: ["productName"],
+        where: { auditId: prevPrevAudit.id },
+        _sum: { physicalQty: true },
+      })
+      .catch(async () => []);
+
+    for (const r of prevPrevAgg as any[]) {
+      const pn = cleanStr(r.productName) || "Unknown";
+      const k = pn.toLowerCase();
+      prevPrevPhysicalIndex.set(k, clamp0(num(r?._sum?.physicalQty)));
+    }
+  }
+
+  const prevBaseMap = new Map<string, ProductAggRow>();
+  for (const p of prevOrderedProductsBase) {
+    prevBaseMap.set(p.productName.toLowerCase(), p);
+  }
+
+  // --------------------------------------------------
+  // 8) MERGE PRODUCTS
+  // --------------------------------------------------
+  const baseMap = new Map<string, ProductAggRow>();
   for (const p of orderedProductsBase) {
     baseMap.set(p.productName.toLowerCase(), p);
   }
@@ -376,48 +457,99 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
   const keySet = new Set<string>();
   for (const p of orderedProductsBase) keySet.add(p.productName.toLowerCase());
+  for (const p of prevOrderedProductsBase) keySet.add(p.productName.toLowerCase());
   for (const k of auditPhysicalIndex.keys()) keySet.add(k);
   for (const k of pendingIndex.keys()) keySet.add(k);
   for (const k of prevPhysicalIndex.keys()) keySet.add(k);
+  for (const k of prevPrevPhysicalIndex.keys()) keySet.add(k);
 
   const keys = Array.from(keySet.values());
 
   const orderedProducts = keys.map((k) => {
     const base = baseMap.get(k);
+    const prevBase = prevBaseMap.get(k);
     const pendingRow = pendingMap.get(k);
 
     const productName =
       base?.productName ||
+      prevBase?.productName ||
       auditNameIndex.get(k) ||
       prevAuditNameIndex.get(k) ||
       pendingRow?.productName ||
       k;
 
+    // current month
     const ordersCount = num(base?.orders);
     const orderQty = num(base?.qty);
     const amount = num(base?.amount);
 
+    // current live pending
     const pendingQtyPcs = num(pendingIndex.get(k) ?? 0);
 
+    // previous month verified physical
     const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
     const previousMonthPhysicalQtyPcs =
       typeof previousMonthPhysicalQtyPcsRaw === "number"
         ? clamp0(previousMonthPhysicalQtyPcsRaw)
         : null;
 
-    const openingStockQtyPcs =
-      previousMonthPhysicalQtyPcs != null ? previousMonthPhysicalQtyPcs : 0;
+    // previous month order qty
+    const prevOrderQty = num(prevBase?.qty);
 
+    // older audit before previous month (used only if prev month audit missing)
+    const prevPrevPhysical = prevPrevPhysicalIndex.has(k)
+      ? clamp0(num(prevPrevPhysicalIndex.get(k)))
+      : null;
+
+    // professional opening logic:
+    // 1. previous month audit physical
+    // 2. previous month estimated closing:
+    //    (older audit opening + prev month orders - current pending)
+    // 3. previous month current pending
+    // 4. prev month opening + prev month orders
+    // 5. 0
+    let openingStockQtyPcs = 0;
+    let openingSource:
+      | "PREVIOUS_AUDIT"
+      | "PREVIOUS_ESTIMATED_CLOSING"
+      | "PENDING_FALLBACK"
+      | "OPENING_PLUS_ORDERS"
+      | "NONE" = "NONE";
+
+    if (previousMonthPhysicalQtyPcs != null) {
+      openingStockQtyPcs = previousMonthPhysicalQtyPcs;
+      openingSource = "PREVIOUS_AUDIT";
+    } else {
+      const prevEstimatedFromOlderAudit =
+        prevPrevPhysical != null
+          ? clamp0(prevPrevPhysical + prevOrderQty - pendingQtyPcs)
+          : null;
+
+      if (prevEstimatedFromOlderAudit != null) {
+        openingStockQtyPcs = prevEstimatedFromOlderAudit;
+        openingSource = "PREVIOUS_ESTIMATED_CLOSING";
+      } else if (pendingQtyPcs > 0) {
+        openingStockQtyPcs = pendingQtyPcs;
+        openingSource = "PENDING_FALLBACK";
+      } else if (prevOrderQty > 0) {
+        openingStockQtyPcs = prevOrderQty;
+        openingSource = "OPENING_PLUS_ORDERS";
+      } else {
+        openingStockQtyPcs = 0;
+        openingSource = "NONE";
+      }
+    }
+
+    // current month audit / physical
     const auditQtyPcsRaw = auditPhysicalIndex.get(k);
     const hasAudit = !!auditInMonth?.id && typeof auditQtyPcsRaw === "number";
     const auditQtyPcs =
       hasAudit && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
 
-    // current month physical
     const physicalQtyPcs =
       auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
 
-    // sold qty
+    // sold
     const auditSoldRaw = auditSoldIndex.get(k);
     const auditSoldQty =
       hasAudit && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
@@ -429,12 +561,17 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
         ? null
         : clamp0(openingStockQtyPcs + orderQty - physicalQtyPcs);
 
+    const soldSource: "AUDIT" | "FORMULA" | "NONE" =
+      auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
+
     const physicalSource: "AUDIT" | "PENDING" | "NONE" =
       auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE";
 
     return {
       productName,
+
       openingStockQtyPcs,
+      openingSource,
       previousMonthPhysicalQtyPcs,
 
       orders: ordersCount,
@@ -443,6 +580,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
 
       pendingQtyPcs,
       soldQtyPcs,
+      soldSource,
       auditQtyPcs,
       physicalQtyPcs,
       physicalSource,
@@ -466,7 +604,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
   });
 
   // --------------------------------------------------
-  // 7) PENDING STOCK LIST
+  // 9) PENDING STOCK LIST
   // --------------------------------------------------
   const pendingStock = pendingByProduct.map((p) => {
     const k = p.productName.toLowerCase();
@@ -478,8 +616,43 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
         ? clamp0(previousMonthPhysicalQtyPcsRaw)
         : null;
 
-    const openingStockQtyPcs =
-      previousMonthPhysicalQtyPcs != null ? previousMonthPhysicalQtyPcs : 0;
+    const prevOrderQty = num(prevBaseMap.get(k)?.qty);
+
+    const prevPrevPhysical = prevPrevPhysicalIndex.has(k)
+      ? clamp0(num(prevPrevPhysicalIndex.get(k)))
+      : null;
+
+    let openingStockQtyPcs = 0;
+    let openingSource:
+      | "PREVIOUS_AUDIT"
+      | "PREVIOUS_ESTIMATED_CLOSING"
+      | "PENDING_FALLBACK"
+      | "OPENING_PLUS_ORDERS"
+      | "NONE" = "NONE";
+
+    if (previousMonthPhysicalQtyPcs != null) {
+      openingStockQtyPcs = previousMonthPhysicalQtyPcs;
+      openingSource = "PREVIOUS_AUDIT";
+    } else {
+      const prevEstimatedFromOlderAudit =
+        prevPrevPhysical != null
+          ? clamp0(prevPrevPhysical + prevOrderQty - pendingQtyPcs)
+          : null;
+
+      if (prevEstimatedFromOlderAudit != null) {
+        openingStockQtyPcs = prevEstimatedFromOlderAudit;
+        openingSource = "PREVIOUS_ESTIMATED_CLOSING";
+      } else if (pendingQtyPcs > 0) {
+        openingStockQtyPcs = pendingQtyPcs;
+        openingSource = "PENDING_FALLBACK";
+      } else if (prevOrderQty > 0) {
+        openingStockQtyPcs = prevOrderQty;
+        openingSource = "OPENING_PLUS_ORDERS";
+      } else {
+        openingStockQtyPcs = 0;
+        openingSource = "NONE";
+      }
+    }
 
     const auditQtyPcsRaw = auditPhysicalIndex.get(k);
     const hasAudit = !!auditInMonth?.id && typeof auditQtyPcsRaw === "number";
@@ -500,19 +673,24 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
         ? null
         : clamp0(openingStockQtyPcs - physicalQtyPcs);
 
+    const soldSource: "AUDIT" | "FORMULA" | "NONE" =
+      auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
+
     return {
       ...p,
       openingStockQtyPcs,
+      openingSource,
       previousMonthPhysicalQtyPcs,
       auditQtyPcs,
       physicalQtyPcs,
       soldQtyPcs,
+      soldSource,
       physicalSource: auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
     };
   });
 
   // --------------------------------------------------
-  // 8) SUMMARY
+  // 10) SUMMARY
   // --------------------------------------------------
   const totalOrders = (orders as any[]).length;
   const totalSales = (orders as any[]).reduce((a, o: any) => a + num(o?.totalAmount), 0);
@@ -530,21 +708,30 @@ export async function GET(req: Request, ctx: { params: Promise<{ retailerId: str
         to: range.to.toISOString(),
       },
 
-      // current month audit
       auditId: auditInMonth?.id || null,
-      auditAt: auditInMonth?.createdAt ? new Date(auditInMonth.createdAt).toISOString() : null,
+      auditAt: auditInMonth?.createdAt
+        ? new Date(auditInMonth.createdAt).toISOString()
+        : null,
       auditItemsCount,
       auditFoundInMonth: !!auditInMonth?.id,
 
-      // latest audit
       latestAuditId: latestAudit?.id || null,
-      latestAuditAt: latestAudit?.createdAt ? new Date(latestAudit.createdAt).toISOString() : null,
+      latestAuditAt: latestAudit?.createdAt
+        ? new Date(latestAudit.createdAt).toISOString()
+        : null,
 
-      // previous month audit
       previousMonth: prevRange?.month || null,
       previousAuditId: prevAudit?.id || null,
-      previousAuditAt: prevAudit?.createdAt ? new Date(prevAudit.createdAt).toISOString() : null,
+      previousAuditAt: prevAudit?.createdAt
+        ? new Date(prevAudit.createdAt).toISOString()
+        : null,
       previousAuditItemsCount: prevAuditItemsCount,
+
+      previousPreviousMonth: prevPrevRange?.month || null,
+      previousPreviousAuditId: prevPrevAudit?.id || null,
+      previousPreviousAuditAt: prevPrevAudit?.createdAt
+        ? new Date(prevPrevAudit.createdAt).toISOString()
+        : null,
     },
     summary: {
       totalOrders,
