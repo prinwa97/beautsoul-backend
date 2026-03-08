@@ -160,9 +160,6 @@ export async function GET(
   const prevRange = getPreviousMonthRangeUTC(month);
   const pr: any = prisma as any;
 
-  // --------------------------------------------------
-  // 1) ORDER MODEL
-  // --------------------------------------------------
   const ordFound = pickRetailerOrderDelegate(pr);
   if (!ordFound) {
     return jsonError("RETAILER_ORDER_MODEL_NOT_FOUND", 500, {
@@ -174,9 +171,6 @@ export async function GET(
 
   const Order = ordFound.delegate;
 
-  // --------------------------------------------------
-  // 2) CURRENT MONTH ORDERS
-  // --------------------------------------------------
   const orders = await Order.findMany({
     where: {
       retailerId,
@@ -219,9 +213,6 @@ export async function GET(
 
   const orderedProductsBase = buildProductAggFromOrders(orders as any[]);
 
-  // --------------------------------------------------
-  // 3) PREVIOUS MONTH ORDERS
-  // --------------------------------------------------
   let prevMonthOrders: any[] = [];
   let prevOrderedProductsBase: ProductAggRow[] = [];
 
@@ -253,9 +244,6 @@ export async function GET(
     prevOrderedProductsBase = buildProductAggFromOrders(prevMonthOrders as any[]);
   }
 
-  // --------------------------------------------------
-  // 4) SYSTEM PENDING STOCK (CURRENT LIVE STOCK)
-  // --------------------------------------------------
   const stockFound = pickStockLotDelegate(pr);
   let pendingByProduct: Array<{ productName: string; qtyOnHandPcs: number }> = [];
   let stockModelKey: string | null = null;
@@ -292,9 +280,6 @@ export async function GET(
     pendingIndex.set(p.productName.toLowerCase(), p.qtyOnHandPcs);
   }
 
-  // --------------------------------------------------
-  // 5) CURRENT MONTH AUDIT
-  // --------------------------------------------------
   const auditInMonth = await prisma.retailerStockAudit.findFirst({
     where: {
       retailerId,
@@ -313,7 +298,6 @@ export async function GET(
   const hasAuditInMonth = !!auditInMonth?.id;
 
   const auditPhysicalIndex = new Map<string, number>();
-  const auditSoldIndex = new Map<string, number>();
   const auditNameIndex = new Map<string, string>();
   let auditItemsCount = 0;
 
@@ -336,7 +320,7 @@ export async function GET(
       .groupBy({
         by: ["productName"],
         where: { auditId: auditInMonth.id },
-        _sum: { physicalQty: true, soldQty: true },
+        _sum: { physicalQty: true },
         _count: { _all: true },
       })
       .catch(async () => []);
@@ -346,24 +330,13 @@ export async function GET(
       const k = pn.toLowerCase();
 
       const physicalRaw = toOptionalNumber(r?._sum?.physicalQty);
-      const soldRaw = toOptionalNumber(r?._sum?.soldQty);
-
       auditPhysicalIndex.set(k, clamp0(physicalRaw ?? 0));
 
-      // soldQty tabhi set karo jab actually value present ho
-      if (soldRaw !== null) {
-        auditSoldIndex.set(k, clamp0(soldRaw));
-      }
-
       if (!auditNameIndex.has(k)) auditNameIndex.set(k, pn);
-
       auditItemsCount += num(r?._count?._all);
     }
   }
 
-  // --------------------------------------------------
-  // 6) PREVIOUS MONTH AUDIT
-  // --------------------------------------------------
   const prevAudit = prevRange
     ? await prisma.retailerStockAudit.findFirst({
         where: {
@@ -410,14 +383,10 @@ export async function GET(
 
       prevPhysicalIndex.set(k, clamp0(physicalRaw ?? 0));
       if (!prevAuditNameIndex.has(k)) prevAuditNameIndex.set(k, pn);
-
       prevAuditItemsCount += num(r?._count?._all);
     }
   }
 
-  // --------------------------------------------------
-  // 7) PREVIOUS MONTH OPENING ESTIMATE BASE
-  // --------------------------------------------------
   const prevPrevRange = prevRange ? getPreviousMonthRangeUTC(prevRange.month) : null;
 
   const prevPrevAudit = prevPrevRange
@@ -455,9 +424,6 @@ export async function GET(
     prevBaseMap.set(p.productName.toLowerCase(), p);
   }
 
-  // --------------------------------------------------
-  // 8) MERGE PRODUCTS
-  // --------------------------------------------------
   const baseMap = new Map<string, ProductAggRow>();
   for (const p of orderedProductsBase) {
     baseMap.set(p.productName.toLowerCase(), p);
@@ -475,7 +441,6 @@ export async function GET(
   for (const k of prevPhysicalIndex.keys()) keySet.add(k);
   for (const k of prevPrevPhysicalIndex.keys()) keySet.add(k);
 
-  // current pending ko sirf tab include karo jab current month audit NA ho
   if (!hasAuditInMonth) {
     for (const k of pendingIndex.keys()) keySet.add(k);
   }
@@ -498,7 +463,6 @@ export async function GET(
     const ordersCount = num(base?.orders);
     const orderQty = num(base?.qty);
     const amount = num(base?.amount);
-
     const pendingQtyPcs = num(pendingIndex.get(k) ?? 0);
 
     const previousMonthPhysicalQtyPcsRaw = prevPhysicalIndex.get(k);
@@ -549,8 +513,6 @@ export async function GET(
     const auditQtyPcs =
       hasAuditInMonth && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
 
-    // IMPORTANT:
-    // audit month me pending fallback mat use karo
     const physicalQtyPcs =
       hasAuditInMonth
         ? auditQtyPcs
@@ -560,19 +522,13 @@ export async function GET(
         ? pendingQtyPcs
         : null;
 
-    const auditSoldRaw = auditSoldIndex.get(k);
-    const auditSoldQty =
-      hasAuditInMonth && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
-
     const soldQtyPcs =
-      auditSoldQty != null
-        ? auditSoldQty
-        : physicalQtyPcs == null
+      physicalQtyPcs == null
         ? null
         : clamp0(openingStockQtyPcs + orderQty - physicalQtyPcs);
 
-    const soldSource: "AUDIT" | "FORMULA" | "NONE" =
-      auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
+    const soldSource: "FORMULA" | "NONE" =
+      physicalQtyPcs != null ? "FORMULA" : "NONE";
 
     const physicalSource: "AUDIT" | "PENDING" | "NONE" =
       hasAuditInMonth
@@ -618,9 +574,6 @@ export async function GET(
     return num(b.amount) - num(a.amount) || num(b.qty) - num(a.qty);
   });
 
-  // --------------------------------------------------
-  // 9) PENDING STOCK LIST
-  // --------------------------------------------------
   const pendingStock = hasAuditInMonth
     ? []
     : pendingByProduct.map((p) => {
@@ -671,43 +624,29 @@ export async function GET(
           }
         }
 
-        const auditQtyPcsRaw = auditPhysicalIndex.get(k);
-        const auditQtyPcs =
-          hasAuditInMonth && typeof auditQtyPcsRaw === "number" ? clamp0(auditQtyPcsRaw) : null;
-
-        const physicalQtyPcs =
-          auditQtyPcs != null ? auditQtyPcs : pendingQtyPcs > 0 ? pendingQtyPcs : null;
-
-        const auditSoldRaw = auditSoldIndex.get(k);
-        const auditSoldQty =
-          hasAuditInMonth && typeof auditSoldRaw === "number" ? clamp0(auditSoldRaw) : null;
+        const physicalQtyPcs = pendingQtyPcs > 0 ? pendingQtyPcs : null;
 
         const soldQtyPcs =
-          auditSoldQty != null
-            ? auditSoldQty
-            : physicalQtyPcs == null
+          physicalQtyPcs == null
             ? null
             : clamp0(openingStockQtyPcs - physicalQtyPcs);
 
-        const soldSource: "AUDIT" | "FORMULA" | "NONE" =
-          auditSoldQty != null ? "AUDIT" : physicalQtyPcs != null ? "FORMULA" : "NONE";
+        const soldSource: "FORMULA" | "NONE" =
+          physicalQtyPcs != null ? "FORMULA" : "NONE";
 
         return {
           ...p,
           openingStockQtyPcs,
           openingSource,
           previousMonthPhysicalQtyPcs,
-          auditQtyPcs,
+          auditQtyPcs: null,
           physicalQtyPcs,
           soldQtyPcs,
           soldSource,
-          physicalSource: auditQtyPcs != null ? "AUDIT" : pendingQtyPcs > 0 ? "PENDING" : "NONE",
+          physicalSource: pendingQtyPcs > 0 ? "PENDING" : "NONE",
         };
       });
 
-  // --------------------------------------------------
-  // 10) SUMMARY
-  // --------------------------------------------------
   const totalOrders = (orders as any[]).length;
   const totalSales = (orders as any[]).reduce((a, o: any) => a + num(o?.totalAmount), 0);
 
