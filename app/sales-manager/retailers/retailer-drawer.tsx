@@ -16,7 +16,6 @@ type RetailerDetail = {
   address?: string | null;
   city?: string | null;
   phone?: string | null;
-
   distributorName?: string | null;
   foName?: string | null;
 };
@@ -78,20 +77,24 @@ function fmtDateTime(s: any) {
   if (!Number.isFinite(d.getTime())) return "—";
   return d.toLocaleString("en-IN");
 }
+
 function dtShort(s: any) {
   if (!s) return "—";
   const d = new Date(s);
   if (!Number.isFinite(d.getTime())) return "—";
   return d.toLocaleDateString("en-IN");
 }
+
 function clean(s: any) {
   const x = String(s ?? "").trim();
   return x.length ? x : "";
 }
+
 function n(v: any) {
   const x = Number(v);
   return Number.isFinite(x) ? x : 0;
 }
+
 function pct(num: number, den: number) {
   const d = den <= 0 ? 0 : den;
   if (!d) return 0;
@@ -103,11 +106,18 @@ function statusForRow(r: CombinedRow) {
   const sold = n(r.soldQty);
   const phys = n(r.physicalQty);
 
-  if (purchased > 0 && phys === 0 && sold > 0) return { label: "REORDER", tone: "red" as const };
-  if (purchased > 0 && sold >= purchased * 0.8 && phys <= 3) return { label: "FAST", tone: "green" as const };
-  if (purchased > 0 && sold <= purchased * 0.3 && phys >= Math.max(5, Math.ceil(purchased * 0.5)))
+  if (purchased > 0 && phys === 0 && sold > 0) {
+    return { label: "REORDER", tone: "red" as const };
+  }
+  if (purchased > 0 && sold >= purchased * 0.8 && phys <= 3) {
+    return { label: "FAST", tone: "green" as const };
+  }
+  if (purchased > 0 && sold <= purchased * 0.3 && phys >= Math.max(5, Math.ceil(purchased * 0.5))) {
     return { label: "SLOW", tone: "amber" as const };
-  if (purchased === 0 && sold === 0 && phys > 0) return { label: "AUDIT ONLY", tone: "gray" as const };
+  }
+  if (purchased === 0 && sold === 0 && phys > 0) {
+    return { label: "AUDIT ONLY", tone: "gray" as const };
+  }
   return { label: "HEALTHY", tone: "blue" as const };
 }
 
@@ -133,6 +143,7 @@ export default function RetailerDrawer({
   retailerId,
   open,
   onClose,
+  onOpenProduct,
   mode = "TODAY",
   from,
   to,
@@ -140,23 +151,19 @@ export default function RetailerDrawer({
   retailerId: string;
   open: boolean;
   onClose: () => void;
+  onOpenProduct: (productName: string) => void;
   mode?: Mode;
-
-  /** ✅ IMPORTANT: page ka range drawer ko mile */
   from?: string;
   to?: string;
 }) {
-  // Retailer detail
   const [retLoading, setRetLoading] = useState(false);
   const [retErr, setRetErr] = useState("");
   const [retailer, setRetailer] = useState<RetailerDetail | null>(null);
 
-  // Combined products
   const [rowsLoading, setRowsLoading] = useState(false);
   const [rowsErr, setRowsErr] = useState("");
   const [rowsData, setRowsData] = useState<CombinedResp | null>(null);
 
-  // Audit modal
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditErr, setAuditErr] = useState<string>("");
@@ -164,15 +171,21 @@ export default function RetailerDrawer({
   const [auditProductName, setAuditProductName] = useState<string>("");
   const auditBodyRef = useRef<HTMLDivElement>(null);
 
-  // Abort controllers
   const retAbortRef = useRef<AbortController | null>(null);
   const rowsAbortRef = useRef<AbortController | null>(null);
   const auditAbortRef = useRef<AbortController | null>(null);
 
-  // Fetch when opens
+  function closeAuditModal() {
+    auditAbortRef.current?.abort();
+    setAuditOpen(false);
+    setAuditLoading(false);
+    setAuditErr("");
+    setAuditData(null);
+    setAuditProductName("");
+  }
+
   useEffect(() => {
-    if (!open) return;
-    if (!retailerId) return;
+    if (!open || !retailerId) return;
 
     setRetErr("");
     setRetailer(null);
@@ -181,6 +194,9 @@ export default function RetailerDrawer({
     setRowsErr("");
     setRowsData(null);
     setRowsLoading(true);
+
+    // reset nested modal on retailer change / reopen
+    closeAuditModal();
 
     retAbortRef.current?.abort();
     rowsAbortRef.current?.abort();
@@ -202,6 +218,7 @@ export default function RetailerDrawer({
           setRetailer({ id: retailerId, name: retailerId });
           return;
         }
+
         setRetailer(j.retailer || { id: retailerId, name: retailerId });
       } catch (e: any) {
         const msg = String(e?.name === "AbortError" ? "" : e?.message || e);
@@ -214,7 +231,6 @@ export default function RetailerDrawer({
 
     (async () => {
       try {
-               // ✅ FIX: from/to sirf CUSTOM me bhejo (MONTH/YEAR/TODAY me backend range ko mat override karo)
         const p = new URLSearchParams();
         p.set("mode", mode);
 
@@ -227,12 +243,8 @@ export default function RetailerDrawer({
           retailerId
         )}/products/combined?${p.toString()}`;
 
-        console.log("DRAWER COMBINED URL =>", url);
-
         const res = await fetch(url, { cache: "no-store", signal: rowsCtrl.signal });
         const j = (await res.json().catch(() => null)) as CombinedResp | null;
-
-        console.log("DRAWER COMBINED RESP =>", res.status, j);
 
         if (!res.ok || !j?.ok) {
           const msg = j?.error || `HTTP_${res.status}`;
@@ -240,6 +252,7 @@ export default function RetailerDrawer({
           setRowsData(j || { ok: false, error: msg });
           return;
         }
+
         setRowsData(j);
       } catch (e: any) {
         const msg = String(e?.name === "AbortError" ? "" : e?.message || e);
@@ -255,6 +268,14 @@ export default function RetailerDrawer({
       rowsCtrl.abort();
     };
   }, [open, retailerId, mode, from, to]);
+
+  useEffect(() => {
+    if (!open) {
+      retAbortRef.current?.abort();
+      rowsAbortRef.current?.abort();
+      closeAuditModal();
+    }
+  }, [open]);
 
   async function openAudit(productName: string) {
     if (!retailerId) return;
@@ -325,7 +346,6 @@ export default function RetailerDrawer({
 
   return (
     <>
-      {/* ✅ MAIN POPUP */}
       <ModalShell
         open={open}
         onClose={onClose}
@@ -343,6 +363,7 @@ export default function RetailerDrawer({
               <span>
                 Mode: <b>{mode}</b>
               </span>
+
               {from || to ? (
                 <span>
                   Range:{" "}
@@ -352,11 +373,13 @@ export default function RetailerDrawer({
                   </b>
                 </span>
               ) : null}
+
               {city ? (
                 <span>
                   City: <b>{city}</b>
                 </span>
               ) : null}
+
               {phone ? (
                 <span>
                   Phone: <b>{phone}</b>
@@ -382,6 +405,7 @@ export default function RetailerDrawer({
             ) : null}
 
             {retLoading ? <div className="mt-2 text-xs text-gray-500">Loading retailer…</div> : null}
+
             {!retLoading && retErr ? (
               <div className="mt-2 text-xs text-red-700">
                 Retailer detail error: <b>{retErr}</b>
@@ -390,12 +414,13 @@ export default function RetailerDrawer({
           </div>
         }
       >
-        {/* Body */}
         <div className="p-4 overflow-auto max-h-[78vh]">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-black text-gray-900">Products (Purchased + Sold + Physical)</div>
-              <div className="text-xs text-gray-600 mt-1">One table for quick comparison & decision boosting.</div>
+              <div className="text-xs text-gray-600 mt-1">
+                Row ya product name par click karo to product detail + batch detail open hoga.
+              </div>
             </div>
 
             <div className="text-right">
@@ -428,7 +453,7 @@ export default function RetailerDrawer({
 
           {!rowsLoading && rowsData?.ok ? (
             <div className="mt-3 overflow-x-auto border rounded-2xl bg-white">
-              <table className="min-w-[980px] w-full text-[13px]">
+              <table className="min-w-[1100px] w-full text-[13px]">
                 <thead className="bg-gray-50 border-b">
                   <tr className="text-left">
                     <TH>Product</TH>
@@ -450,18 +475,36 @@ export default function RetailerDrawer({
                     const st = statusForRow(row);
 
                     return (
-                      <tr key={`${row.productId || row.productName}-${idx}`} className="border-t">
+                      <tr
+                        key={`${row.productId || row.productName}-${idx}`}
+                        className="border-t hover:bg-gray-50 cursor-pointer"
+                        onClick={() => onOpenProduct(row.productName)}
+                        title="Open product detail"
+                      >
                         <TD className="font-black">
                           <div className="min-w-[260px]">
-                            <div className="truncate">{row.productName || "—"}</div>
-                            <div className="mt-1 text-[11px] text-gray-500">
-                              {row.lastAuditAt ? (
-                                <>
-                                  Last audit: <b>{dtShort(row.lastAuditAt)}</b>
-                                </>
-                              ) : (
-                                <>Last audit: —</>
-                              )}
+                            <button
+                              type="button"
+                              className="truncate text-left font-black underline underline-offset-2 hover:text-gray-700"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenProduct(row.productName);
+                              }}
+                              title="Open product detail"
+                            >
+                              {row.productName || "—"}
+                            </button>
+
+                            <div className="mt-1 text-[11px] text-gray-500 flex flex-wrap gap-x-3 gap-y-1">
+                              <span>
+                                Last audit: <b>{row.lastAuditAt ? dtShort(row.lastAuditAt) : "—"}</b>
+                              </span>
+                              <span>
+                                Batch: <b>{row.lastBatchNo || "—"}</b>
+                              </span>
+                              <span>
+                                Expiry: <b>{row.lastExpiryDate ? dtShort(row.lastExpiryDate) : "—"}</b>
+                              </span>
                             </div>
                           </div>
                         </TD>
@@ -488,13 +531,31 @@ export default function RetailerDrawer({
                         </TD>
 
                         <TD className="text-right">
-                          <button
-                            className="text-[12px] px-3 py-1.5 rounded-xl border bg-white font-black hover:bg-gray-50"
-                            onClick={() => openAudit(row.productName)}
-                            title="Open latest audit for this product"
-                          >
-                            Audit
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              type="button"
+                              className="text-[12px] px-3 py-1.5 rounded-xl border bg-white font-black hover:bg-gray-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenProduct(row.productName);
+                              }}
+                              title="Open product detail"
+                            >
+                              Product
+                            </button>
+
+                            <button
+                              type="button"
+                              className="text-[12px] px-3 py-1.5 rounded-xl border bg-white font-black hover:bg-gray-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openAudit(row.productName);
+                              }}
+                              title="Open latest audit for this product"
+                            >
+                              Audit
+                            </button>
+                          </div>
                         </TD>
                       </tr>
                     );
@@ -518,11 +579,10 @@ export default function RetailerDrawer({
         </div>
       </ModalShell>
 
-      {/* ✅ AUDIT MODAL */}
       <ModalShell
         open={auditOpen}
-        onClose={() => setAuditOpen(false)}
-        zIndex={95}
+        onClose={closeAuditModal}
+        zIndex={145}
         widthClass="max-w-4xl"
         titleTop={
           <div>
@@ -532,7 +592,13 @@ export default function RetailerDrawer({
             </div>
             <div className="text-xs text-gray-600 mt-1">
               Last audit:{" "}
-              <b>{auditData?.audit?.createdAt ? fmtDateTime(auditData.audit.createdAt) : auditLoading ? "Loading…" : "—"}</b>
+              <b>
+                {auditData?.audit?.createdAt
+                  ? fmtDateTime(auditData.audit.createdAt)
+                  : auditLoading
+                  ? "Loading…"
+                  : "—"}
+              </b>
             </div>
           </div>
         }
@@ -550,7 +616,9 @@ export default function RetailerDrawer({
           {!auditLoading && auditData?.ok ? (
             <>
               {!auditData.audit ? (
-                <div className="p-3 rounded-xl border bg-gray-50 text-gray-700 text-sm">No audit found for this retailer.</div>
+                <div className="p-3 rounded-xl border bg-gray-50 text-gray-700 text-sm">
+                  No audit found for this retailer.
+                </div>
               ) : null}
 
               <div className="mt-3 overflow-x-auto border rounded-2xl bg-white">
@@ -615,7 +683,16 @@ export default function RetailerDrawer({
 function TH({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <th className={["px-4 py-3 font-black", className].join(" ")}>{children}</th>;
 }
-function TD({ children, className = "", colSpan }: { children: React.ReactNode; className?: string; colSpan?: number }) {
+
+function TD({
+  children,
+  className = "",
+  colSpan,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  colSpan?: number;
+}) {
   return (
     <td colSpan={colSpan} className={["px-4 py-3 align-top", className].join(" ")}>
       {children}

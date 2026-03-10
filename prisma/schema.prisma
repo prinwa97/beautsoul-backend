@@ -144,10 +144,10 @@ model Order {
   retailer          Retailer    @relation(fields: [retailerId], references: [id])
   items             OrderItem[]
 
-  @@index([distributorId])
-  @@index([retailerId])
-  @@index([status])
-  @@index([idempotencyKey])
+  @@index([distributorId, createdAt])
+  @@index([retailerId, createdAt])
+  @@index([status, createdAt])
+  @@index([createdAt])
   @@index([clientRequestHash])
 }
 
@@ -663,7 +663,7 @@ model RetailerStockAuditItem {
   systemQty   Int
   physicalQty Int
   variance    Int
-  soldQty     Int         @default(0)
+  soldQty     Int                @default(0)
   audit       RetailerStockAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
 
   @@index([auditId])

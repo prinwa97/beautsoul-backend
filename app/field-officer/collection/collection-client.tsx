@@ -49,7 +49,7 @@ function todayYMD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function Icon({ name }: { name: "download" | "close" | "rupee" }) {
+function Icon({ name }: { name: "download" | "close" | "rupee" | "share" }) {
   const c = "h-5 w-5";
   if (name === "download")
     return (
@@ -70,6 +70,19 @@ function Icon({ name }: { name: "download" | "close" | "rupee" }) {
     return (
       <svg className={c} viewBox="0 0 24 24" fill="none">
         <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+
+  if (name === "share")
+    return (
+      <svg className={c} viewBox="0 0 24 24" fill="none">
+        <path
+          d="M8.5 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7 4a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-7 5a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm2.6-10.6 2.8 1.6m-2.8 1.4 2.8-1.6"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
     );
 
@@ -181,12 +194,9 @@ export default function CollectionPage() {
     }
   }
 
-  // ✅ Outstanding running balance for each ledger row
-  // Rule: DEBIT increases due, CREDIT reduces due
+  // running outstanding
   const ledgerWithBalance = useMemo(() => {
     const items = [...ledger];
-
-    // running calc needs oldest -> newest
     items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     let bal = 0;
@@ -197,19 +207,16 @@ export default function CollectionPage() {
       return { ...it, balanceAfter: bal };
     });
 
-    // UI: newest-first
     withBal.reverse();
     return withBal;
   }, [ledger]);
 
-  // ✅ Color + label rule:
-  // + => Due (company will collect) => RED
-  // - => Advance (retailer paid extra) => GREEN
   function balanceColor(b: number) {
     if (b > 0) return "text-red-600";
     if (b < 0) return "text-green-600";
     return "text-gray-600";
   }
+
   function balanceLabel(b: number) {
     if (b > 0) return "Due";
     if (b < 0) return "Advance";
@@ -237,6 +244,47 @@ export default function CollectionPage() {
   function closeCollect() {
     setCollectOpen(false);
     setSaving(false);
+  }
+
+  async function shareRetailer() {
+    if (!active) {
+      setToast("Select retailer first");
+      return;
+    }
+
+    try {
+      const text = [
+        "🧾 BeautSoul Collection Summary",
+        "",
+        `Retailer: ${active.name}`,
+        `City: ${active.city || "-"}`,
+        active.phone ? `Phone: ${active.phone}` : null,
+        `Outstanding: ${inr(Math.abs(active.balance))}`,
+        `Status: ${balanceLabel(active.balance)}`,
+        ledgerWithBalance.length
+          ? `Last Entry: ${ymd(ledgerWithBalance[0].date)} | ${ledgerWithBalance[0].type} | ${inr(
+              Number(ledgerWithBalance[0].amount || 0)
+            )}`
+          : "Last Entry: -",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      if (navigator.share) {
+        await navigator.share({
+          title: `${active.name} Collection`,
+          text,
+        });
+        return;
+      }
+
+      const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      window.open(waUrl, "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      if (e?.name !== "AbortError") {
+        setToast("Share failed");
+      }
+    }
   }
 
   async function saveCollection() {
@@ -279,13 +327,9 @@ export default function CollectionPage() {
       setToast("✅ Saved");
       setSaving(false);
 
-      // refresh list + ledger + selected header values
       await loadList(q, sort);
-
-      // reload ledger
       await loadLedger(active.retailerId, 0, true);
 
-      // close modal
       setTimeout(() => closeCollect(), 450);
     } catch (e: any) {
       setToast(e?.message || "Failed to save");
@@ -296,12 +340,12 @@ export default function CollectionPage() {
   const compactRows = useMemo(() => rows, [rows]);
 
   return (
-    <div className="p-0 space-y-">
-    <div className="flex items-end justify-center">
-      <div>
-        <div className="text-2xl font-extrabold">Collection</div>
+    <div className="p-0 space-y-3">
+      <div className="flex items-end justify-center">
+        <div>
+          <div className="text-2xl font-extrabold">Collection</div>
+        </div>
       </div>
-    </div>
 
       {/* Filters */}
       <div className="rounded-2xl border border-black/10 bg-white p-3 shadow-sm space-y-2">
@@ -313,36 +357,35 @@ export default function CollectionPage() {
         />
 
         <div className="flex items-center gap-2">
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none"
-          >
-            <option value="RECENT">Most recent</option>
-            <option value="OLDEST">Oldest</option>
-            <option value="HIGH">Highest amount</option>
-            <option value="LOW">Least amount</option>
-            <option value="NAME_AZ">Name A to Z</option>
-          </select>
+  <select
+    value={sort}
+    onChange={(e) => setSort(e.target.value as SortKey)}
+    className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none"
+  >
+    <option value="RECENT">Most recent</option>
+    <option value="OLDEST">Oldest</option>
+    <option value="HIGH">Highest amount</option>
+    <option value="LOW">Least amount</option>
+    <option value="NAME_AZ">Name A to Z</option>
+  </select>
 
-          {/* Download selected retailer ledger */}
-          <button
-            type="button"
-            onClick={() => {
-              if (!active) {
-                setToast("Select retailer to download ledger");
-                return;
-              }
-              window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
-                active.retailerId
-              )}`;
-            }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
-            title="Download selected retailer ledger"
-          >
-            <Icon name="download" />
-          </button>
-        </div>
+  <button
+    type="button"
+    onClick={() => {
+      if (!active) {
+        setToast("Select retailer to download ledger");
+        return;
+      }
+      window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
+        active.retailerId
+      )}`;
+    }}
+    className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
+    title="Download selected retailer ledger"
+  >
+    <Icon name="download" />
+  </button>
+</div>
       </div>
 
       {toast ? (
@@ -395,7 +438,6 @@ export default function CollectionPage() {
       {/* Ledger Drawer */}
       {open && active && (
         <div className="fixed inset-0 z-50 flex items-end bg-black/40">
-          {/* Drawer */}
           <div className="w-full rounded-t-3xl bg-white shadow-2xl">
             {/* Header */}
             <div className="p-4 pb-3">
@@ -415,6 +457,15 @@ export default function CollectionPage() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={shareRetailer}
+                    className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
+                    title="Share retailer summary"
+                  >
+                    <Icon name="share" />
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => {
                       window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
                         active.retailerId
@@ -425,6 +476,7 @@ export default function CollectionPage() {
                   >
                     <Icon name="download" />
                   </button>
+
                   <button
                     type="button"
                     onClick={closeLedger}
@@ -453,7 +505,6 @@ export default function CollectionPage() {
                 </button>
               </div>
 
-              {/* Scroll area */}
               <div className="max-h-[48vh] overflow-y-auto">
                 {ledgerWithBalance.length ? (
                   <div className="divide-y divide-black/10">
@@ -508,7 +559,7 @@ export default function CollectionPage() {
             <div
               className="sticky bottom-0 mt-4 border-t border-black/10 bg-white p-4"
               style={{
-                paddingBottom: "calc(env(safe-area-inset-bottom) + 88px)", // keeps above bottom nav
+                paddingBottom: "calc(env(safe-area-inset-bottom) + 88px)",
               }}
             >
               <button

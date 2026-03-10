@@ -3,6 +3,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
+import { apiHandler } from "@/lib/api-handler";
+import { badRequest, conflict, forbidden, notFound, unauthorized } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,79 +57,174 @@ async function assertUnderSalesManager(meId: string, user: any) {
 
 /* ---------------- route ---------------- */
 
-export async function PATCH(req: Request) {
-  try {
-    const me: any = await getSessionUser();
-    if (!me) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    if (String(me.role || "") !== "SALES_MANAGER")
-      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+export const PATCH = apiHandler(async function PATCH(req: Request) {
+  const me: any = await getSessionUser();
 
-    const body = await req.json().catch(() => null);
-    if (!body) return NextResponse.json({ ok: false, error: "INVALID_JSON" }, { status: 400 });
+  if (!me) {
+    throw unauthorized("Unauthorized");
+  }
 
-    const userId = cleanStr(body.userId);
-    if (!userId) return NextResponse.json({ ok: false, error: "userId required" }, { status: 400 });
+  if (String(me.role || "").toUpperCase() !== "SALES_MANAGER") {
+    throw forbidden("Forbidden");
+  }
 
-    // incoming optional distributorId (from edit modal)
-    const distributorIdRaw = body.hasOwnProperty("distributorId") ? cleanStr(body.distributorId) : undefined;
-    const nextDistributorId: string | null | undefined =
-      distributorIdRaw === undefined ? undefined : distributorIdRaw; // undefined=no change, null=clear, string=set
+  const body = await req.json().catch(() => null);
+  if (!body) {
+    throw badRequest("INVALID_JSON");
+  }
 
-    const status = body.hasOwnProperty("status") ? parseUserStatus(body.status) : null;
+  const userId = cleanStr(body.userId);
+  if (!userId) {
+    throw badRequest("userId required");
+  }
 
-    const u = await prisma.user.findUnique({
+  // incoming optional distributorId (from edit modal)
+  const distributorIdRaw = Object.prototype.hasOwnProperty.call(body, "distributorId")
+    ? cleanStr(body.distributorId)
+    : undefined;
+
+  const nextDistributorId: string | null | undefined =
+    distributorIdRaw === undefined ? undefined : distributorIdRaw; // undefined=no change, null=clear, string=set
+
+  const status = Object.prototype.hasOwnProperty.call(body, "status")
+    ? parseUserStatus(body.status)
+    : null;
+
+  const u = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      role: true,
+      phone: true,
+      distributorId: true,
+    },
+  });
+
+  if (!u) {
+    throw notFound("USER_NOT_FOUND");
+  }
+
+  // must already be under this sales manager (existing relation)
+  const allowed = await assertUnderSalesManager(me.id, u);
+  if (!allowed) {
+    throw forbidden("NOT_ALLOWED");
+  }
+
+  const role = String(u.role || "").toUpperCase();
+
+  // ✅ If distributor is being changed, ensure NEW distributor is also under this sales manager
+  if (nextDistributorId !== undefined) {
+    const canChange = role === "RETAILER" || role === "FIELD_OFFICER";
+
+    if (!canChange) {
+      throw badRequest("DISTRIBUTOR_CHANGE_NOT_ALLOWED");
+    }
+
+    if (nextDistributorId) {
+      const ok = await distributorUnderMe(me.id, nextDistributorId);
+      if (!ok) {
+        throw forbidden("INVALID_DISTRIBUTOR");
+      }
+    }
+  }
+
+  const name = cleanStr(body.name);
+  const phoneRaw = cleanStr(body.phone);
+  const phone = phoneRaw ? normalizePhone(phoneRaw) : null;
+
+  if (phoneRaw && (!phone || phone.length !== 10)) {
+    throw badRequest("INVALID_PHONE");
+  }
+
+  const city = cleanStr(body.city);
+  const district = cleanStr(body.district);
+  const state = cleanStr(body.state);
+  const pincode = cleanStr(body.pincode);
+  const address = cleanStr(body.address);
+
+  // phone uniqueness if changed
+  if (phone && phone !== u.phone) {
+    const exists = await prisma.user.findFirst({
+      where: { phone },
+      select: { id: true },
+    });
+
+    if (exists) {
+      throw conflict("PHONE_EXISTS");
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    // ---------------- USER update (common) ----------------
+    const userData: any = {
+      ...(name ? { name } : {}),
+      ...(phone ? { phone } : {}),
+      city: city ?? null,
+      district: district ?? null,
+      state: state ?? null,
+      pincode: pincode ?? null,
+      address: address ?? null,
+    };
+
+    // ✅ status update on User (ACTIVE/INACTIVE)
+    if (status) {
+      userData.status = status;
+    }
+
+    // ✅ Field officer distributorId lives on USER
+    if (role === "FIELD_OFFICER" && nextDistributorId !== undefined) {
+      userData.distributorId = nextDistributorId; // null allowed
+    }
+
+    const updatedUser = await tx.user.update({
       where: { id: userId },
+      data: userData,
       select: {
         id: true,
-        role: true,
+        name: true,
         phone: true,
+        role: true,
+        code: true,
         distributorId: true,
-      },
+        status: true,
+        city: true,
+        district: true,
+        state: true,
+        pincode: true,
+        address: true,
+      } as any,
     });
-    if (!u) return NextResponse.json({ ok: false, error: "USER_NOT_FOUND" }, { status: 404 });
 
-    // must already be under this sales manager (existing relation)
-    const allowed = await assertUnderSalesManager(me.id, u);
-    if (!allowed) return NextResponse.json({ ok: false, error: "NOT_ALLOWED" }, { status: 403 });
+    // ---------------- role sync ----------------
 
-    const role = String(u.role || "").toUpperCase();
+    if (role === "DISTRIBUTOR") {
+      if (u.distributorId) {
+        await tx.distributor.update({
+          where: { id: u.distributorId },
+          data: {
+            ...(name ? { name } : {}),
+            ...(phone ? { phone } : {}),
+            city: city ?? undefined,
+            district: district ?? undefined,
+            state: state ?? undefined,
+            pincode: pincode ?? undefined,
+            address: address ?? undefined,
+          } as any,
+        });
+      }
+    }
 
-    // ✅ If distributor is being changed, ensure NEW distributor is also under this sales manager
-    if (nextDistributorId !== undefined) {
-      const canChange = role === "RETAILER" || role === "FIELD_OFFICER";
-      if (!canChange) {
-        return NextResponse.json({ ok: false, error: "DISTRIBUTOR_CHANGE_NOT_ALLOWED" }, { status: 400 });
+    if (role === "RETAILER") {
+      const r = await tx.retailer.findFirst({
+        where: { userId },
+        select: { id: true },
+      });
+
+      if (!r?.id) {
+        throw notFound("RETAILER_ROW_NOT_FOUND");
       }
 
-      if (nextDistributorId) {
-        const ok = await distributorUnderMe(me.id, nextDistributorId);
-        if (!ok) return NextResponse.json({ ok: false, error: "INVALID_DISTRIBUTOR" }, { status: 403 });
-      }
-    }
-
-    const name = cleanStr(body.name);
-    const phoneRaw = cleanStr(body.phone);
-    const phone = phoneRaw ? normalizePhone(phoneRaw) : null;
-
-    if (phoneRaw && (!phone || phone.length !== 10)) {
-      return NextResponse.json({ ok: false, error: "INVALID_PHONE" }, { status: 400 });
-    }
-
-    const city = cleanStr(body.city);
-    const district = cleanStr(body.district);
-    const state = cleanStr(body.state);
-    const pincode = cleanStr(body.pincode);
-    const address = cleanStr(body.address);
-
-    // phone uniqueness if changed
-    if (phone && phone !== u.phone) {
-      const exists = await prisma.user.findFirst({ where: { phone }, select: { id: true } });
-      if (exists) return NextResponse.json({ ok: false, error: "PHONE_EXISTS" }, { status: 409 });
-    }
-
-    const result = await prisma.$transaction(async (tx) => {
-      // ---------------- USER update (common) ----------------
-      const userData: any = {
+      const retailerData: any = {
         ...(name ? { name } : {}),
         ...(phone ? { phone } : {}),
         city: city ?? null,
@@ -137,93 +234,22 @@ export async function PATCH(req: Request) {
         address: address ?? null,
       };
 
-      // ✅ status update on User (ACTIVE/INACTIVE)
-      if (status) {
-        userData.status = status;
+      // ✅ Retailer distributorId lives on RETAILER
+      if (nextDistributorId !== undefined) {
+        retailerData.distributorId = nextDistributorId; // null allowed
       }
 
-      // ✅ Field officer distributorId lives on USER
-      if (role === "FIELD_OFFICER" && nextDistributorId !== undefined) {
-        userData.distributorId = nextDistributorId; // null allowed
-      }
-
-      const updatedUser = await tx.user.update({
-        where: { id: userId },
-        data: userData,
-        select: {
-          id: true,
-          name: true,
-          phone: true,
-          role: true,
-          code: true,
-          distributorId: true,
-          status: true,
-          city: true,
-          district: true,
-          state: true,
-          pincode: true,
-          address: true,
-        } as any,
+      await tx.retailer.update({
+        where: { id: r.id },
+        data: retailerData,
       });
-
-      // ---------------- role sync ----------------
-
-      if (role === "DISTRIBUTOR") {
-        if (u.distributorId) {
-          await tx.distributor.update({
-            where: { id: u.distributorId },
-            data: {
-              ...(name ? { name } : {}),
-              ...(phone ? { phone } : {}),
-              city: city ?? undefined,
-              district: district ?? undefined,
-              state: state ?? undefined,
-              pincode: pincode ?? undefined,
-              address: address ?? undefined,
-            } as any,
-          });
-        }
-      }
-
-      if (role === "RETAILER") {
-        const r = await tx.retailer.findFirst({ where: { userId }, select: { id: true } });
-        if (!r?.id) {
-          throw new Error("RETAILER_ROW_NOT_FOUND");
-        }
-
-        const retailerData: any = {
-          ...(name ? { name } : {}),
-          ...(phone ? { phone } : {}),
-          city: city ?? null,
-          district: district ?? null,
-          state: state ?? null,
-          pincode: pincode ?? null,
-          address: address ?? null,
-        };
-
-        // ✅ Retailer distributorId lives on RETAILER
-        if (nextDistributorId !== undefined) {
-          retailerData.distributorId = nextDistributorId; // null allowed
-        }
-
-        await tx.retailer.update({
-          where: { id: r.id },
-          data: retailerData,
-        });
-      }
-
-      return updatedUser;
-    });
-
-    return NextResponse.json({ ok: true, user: result });
-  } catch (e: any) {
-    if (String(e?.code) === "P2002") {
-      return NextResponse.json({ ok: false, error: "DUPLICATE" }, { status: 409 });
     }
-    console.error(e);
-    return NextResponse.json(
-      { ok: false, error: "SERVER_ERROR", message: String(e?.message || e) },
-      { status: 500 }
-    );
-  }
-}
+
+    return updatedUser;
+  });
+
+  return NextResponse.json({
+    ok: true,
+    user: result,
+  });
+});

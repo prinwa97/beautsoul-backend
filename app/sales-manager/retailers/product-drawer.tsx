@@ -29,9 +29,13 @@ type Resp = {
   product?: { name: string };
   mode?: Mode;
   range?: { from: string; to: string };
-
-  kpis?: { orders: number; qty: number; sales: number; repeatRetailers: number; growthPct: number };
-
+  kpis?: {
+    orders: number;
+    qty: number;
+    sales: number;
+    repeatRetailers: number;
+    growthPct: number;
+  };
   topRetailers?: Array<{
     retailerId: string;
     retailerName: string;
@@ -40,7 +44,6 @@ type Resp = {
     orders: number;
     lastAuditAt?: string | null;
   }>;
-
   topCities?: Array<{ city: string; sales: number; orders: number }>;
   adoptionGap?: Array<{ retailerId: string; retailerName: string; city: string; reason: string }>;
   bundlePairs?: Array<{ productName: string; coSales: number; liftPct: number }>;
@@ -51,6 +54,7 @@ function money(nv: any) {
   if (!Number.isFinite(v)) return "0";
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
+
 function dt(s: any) {
   if (!s) return "—";
   const d = new Date(s);
@@ -64,8 +68,6 @@ export default function ProductDrawer({
   onClose,
   onOpenRetailer,
   onOpenCity,
-
-  // ✅ NEW: single source of truth from parent
   mode,
   from,
   to,
@@ -75,7 +77,6 @@ export default function ProductDrawer({
   onClose: () => void;
   onOpenRetailer: (retailerId: string) => void;
   onOpenCity: (city: string) => void;
-
   mode: Mode;
   from: string;
   to: string;
@@ -84,21 +85,21 @@ export default function ProductDrawer({
   const [data, setData] = useState<Resp | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Orders modal
+  // orders modal
   const [ordersOpen, setOrdersOpen] = useState(false);
   const [ordersRetailer, setOrdersRetailer] = useState<{ id: string; name: string } | null>(null);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersData, setOrdersData] = useState<{ ok: boolean; error?: string; orders?: OrderRow[] } | null>(null);
   const ordersBodyRef = useRef<HTMLDivElement>(null);
 
-  // Order detail modal
+  // order detail modal
   const [orderOpen, setOrderOpen] = useState(false);
   const [orderId, setOrderId] = useState<string>("");
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderData, setOrderData] = useState<any>(null);
   const orderBodyRef = useRef<HTMLDivElement>(null);
 
-  // Audit modal
+  // audit modal
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditRetailer, setAuditRetailer] = useState<{ id: string; name: string } | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -109,6 +110,8 @@ export default function ProductDrawer({
     batches?: AuditBatchRow[];
   } | null>(null);
   const auditBodyRef = useRef<HTMLDivElement>(null);
+
+  const fetchSeqRef = useRef(0);
 
   const api = useMemo(() => {
     if (!productName) return "";
@@ -123,28 +126,55 @@ export default function ProductDrawer({
 
   useEffect(() => {
     if (!open || !api) return;
+
+    let active = true;
+    const seq = ++fetchSeqRef.current;
+
+    setLoading(true);
+    setData(null);
+
+    // reset nested modals when new product opens
+    setOrdersOpen(false);
+    setOrdersRetailer(null);
+    setOrdersLoading(false);
+    setOrdersData(null);
+
+    setOrderOpen(false);
+    setOrderId("");
+    setOrderLoading(false);
+    setOrderData(null);
+
+    setAuditOpen(false);
+    setAuditRetailer(null);
+    setAuditLoading(false);
+    setAuditData(null);
+
     (async () => {
-      setLoading(true);
-      setData(null);
       try {
         const res = await fetch(api, { cache: "no-store" });
         const j = (await res.json().catch(() => null)) as Resp | null;
+
+        if (!active || seq !== fetchSeqRef.current) return;
         setData(j || { ok: false, error: "FAILED" });
       } catch (e: any) {
+        if (!active || seq !== fetchSeqRef.current) return;
         setData({ ok: false, error: String(e?.message || e) });
       } finally {
+        if (!active || seq !== fetchSeqRef.current) return;
         setLoading(false);
       }
     })();
+
+    return () => {
+      active = false;
+    };
   }, [open, api]);
 
-  // ✅ scroll top on open/product/mode change (deps fixed)
   useEffect(() => {
     if (!open) return;
     bodyRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [open, productName, mode, from, to]);
 
-  // ✅ nested modals scroll top
   useEffect(() => {
     if (!ordersOpen) return;
     ordersBodyRef.current?.scrollTo({ top: 0, behavior: "auto" });
@@ -160,13 +190,31 @@ export default function ProductDrawer({
     auditBodyRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, [auditOpen, auditRetailer?.id]);
 
-  // ESC close (only main)
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+
+      if (orderOpen) {
+        setOrderOpen(false);
+        return;
+      }
+      if (ordersOpen) {
+        setOrdersOpen(false);
+        return;
+      }
+      if (auditOpen) {
+        setAuditOpen(false);
+        return;
+      }
+
+      onClose();
+    };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, orderOpen, ordersOpen, auditOpen, onClose]);
 
   if (!open) return null;
 
@@ -178,6 +226,12 @@ export default function ProductDrawer({
     setOrdersOpen(true);
     setOrdersLoading(true);
     setOrdersData(null);
+
+    // also close other child modals
+    setOrderOpen(false);
+    setOrderId("");
+    setOrderData(null);
+
     try {
       const url = `/api/sales-manager/retailers/${encodeURIComponent(retailerId)}/orders?productName=${encodeURIComponent(
         pName
@@ -197,6 +251,7 @@ export default function ProductDrawer({
     setOrderOpen(true);
     setOrderLoading(true);
     setOrderData(null);
+
     try {
       const url = `/api/sales-manager/orders/${encodeURIComponent(oid)}/detail`;
       const res = await fetch(url, { cache: "no-store" });
@@ -214,6 +269,7 @@ export default function ProductDrawer({
     setAuditOpen(true);
     setAuditLoading(true);
     setAuditData(null);
+
     try {
       const url = `/api/sales-manager/retailers/${encodeURIComponent(retailerId)}/audit/latest?productName=${encodeURIComponent(
         pName
@@ -230,10 +286,14 @@ export default function ProductDrawer({
 
   return (
     <>
-      {/* MAIN PRODUCT MODAL */}
       <ModalShell
         open={open}
-        onClose={onClose}
+        onClose={() => {
+          setOrdersOpen(false);
+          setOrderOpen(false);
+          setAuditOpen(false);
+          onClose();
+        }}
         zIndex={80}
         widthClass="max-w-6xl"
         titleTop={
@@ -262,12 +322,13 @@ export default function ProductDrawer({
           {loading ? <div className="text-sm text-gray-600">Loading…</div> : null}
 
           {!loading && data && !data.ok ? (
-            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {data.error || "UNKNOWN"}</div>
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
+              Error: {data.error || "UNKNOWN"}
+            </div>
           ) : null}
 
           {!loading && data?.ok ? (
             <>
-              {/* Top Retailers */}
               <Block title="Top Retailers (Orders + Audit)">
                 <div className="overflow-x-auto border rounded-2xl bg-white">
                   <table className="min-w-[950px] w-full text-[13px]">
@@ -284,16 +345,30 @@ export default function ProductDrawer({
                     <tbody>
                       {(data.topRetailers || []).map((r) => (
                         <tr key={r.retailerId} className="border-t hover:bg-gray-50">
-                          <TD className="font-bold underline underline-offset-2 cursor-pointer" onClick={() => onOpenRetailer(r.retailerId)}>
-                            {r.retailerName}
+                          <TD className="font-bold">
+                            <button
+                              type="button"
+                              className="underline underline-offset-2 hover:text-gray-700"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenRetailer(r.retailerId);
+                              }}
+                            >
+                              {r.retailerName}
+                            </button>
                           </TD>
+
                           <TD>{r.city || "—"}</TD>
                           <TD className="text-right font-black">₹{money(r.sales)}</TD>
 
                           <TD className="text-right">
                             <button
+                              type="button"
                               className="px-2 py-1 rounded-xl border bg-white text-xs font-black hover:bg-gray-50"
-                              onClick={() => openOrders(r.retailerId, r.retailerName)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openOrders(r.retailerId, r.retailerName);
+                              }}
                               title="Open orders for this retailer (filtered by product)"
                             >
                               {r.orders}
@@ -302,8 +377,12 @@ export default function ProductDrawer({
 
                           <TD>
                             <button
+                              type="button"
                               className="px-2 py-1 rounded-xl border bg-white text-xs font-black hover:bg-gray-50"
-                              onClick={() => openAudit(r.retailerId, r.retailerName)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openAudit(r.retailerId, r.retailerName);
+                              }}
                               title="Open latest audit (batch-wise)"
                             >
                               {r.lastAuditAt ? dt(r.lastAuditAt) : "—"}
@@ -311,7 +390,14 @@ export default function ProductDrawer({
                           </TD>
 
                           <TD className="text-right">
-                            <button className="px-3 py-2 rounded-2xl bg-gray-900 text-white text-xs font-black" onClick={() => onOpenRetailer(r.retailerId)}>
+                            <button
+                              type="button"
+                              className="px-3 py-2 rounded-2xl bg-gray-900 text-white text-xs font-black"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenRetailer(r.retailerId);
+                              }}
+                            >
                               Open Retailer
                             </button>
                           </TD>
@@ -330,13 +416,13 @@ export default function ProductDrawer({
                 </div>
               </Block>
 
-              {/* Top Cities */}
               <Block title="Top Cities (click)">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {(data.topCities || []).map((c) => (
-                    <div
+                    <button
+                      type="button"
                       key={c.city}
-                      className="p-3 rounded-xl border bg-white cursor-pointer hover:bg-gray-50"
+                      className="p-3 rounded-xl border bg-white text-left hover:bg-gray-50"
                       onClick={() => onOpenCity(c.city)}
                       title="Open city"
                     >
@@ -344,19 +430,19 @@ export default function ProductDrawer({
                       <div className="text-xs text-gray-600 mt-1">
                         Sales: <b>₹{money(c.sales)}</b> · Orders: <b>{c.orders}</b>
                       </div>
-                    </div>
+                    </button>
                   ))}
                   {!(data.topCities || []).length ? <div className="text-sm text-gray-600">No cities for {mode}.</div> : null}
                 </div>
               </Block>
 
-              {/* Adoption Gap */}
               <Block title="Adoption Gap (should buy but not buying)">
                 <div className="space-y-2">
                   {(data.adoptionGap || []).slice(0, 12).map((r) => (
-                    <div
+                    <button
+                      type="button"
                       key={r.retailerId}
-                      className="p-2 rounded-xl border bg-white cursor-pointer hover:bg-gray-50"
+                      className="w-full p-2 rounded-xl border bg-white text-left hover:bg-gray-50"
                       onClick={() => onOpenRetailer(r.retailerId)}
                     >
                       <div className="flex items-center justify-between">
@@ -364,13 +450,12 @@ export default function ProductDrawer({
                         <div className="text-xs text-gray-600">{r.city || "—"}</div>
                       </div>
                       <div className="text-xs text-gray-600 mt-1">{r.reason}</div>
-                    </div>
+                    </button>
                   ))}
                   {!(data.adoptionGap || []).length ? <div className="text-sm text-gray-600">No adoption gap list for {mode}.</div> : null}
                 </div>
               </Block>
 
-              {/* Bundle Pairs */}
               <Block title="Cross-sell / Bundle pairs">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {(data.bundlePairs || []).map((x) => (
@@ -387,10 +472,14 @@ export default function ProductDrawer({
         </div>
       </ModalShell>
 
-      {/* ✅ ORDERS LIST MODAL */}
       <ModalShell
         open={ordersOpen}
-        onClose={() => setOrdersOpen(false)}
+        onClose={() => {
+          setOrdersOpen(false);
+          setOrderOpen(false);
+          setOrderId("");
+          setOrderData(null);
+        }}
         zIndex={90}
         widthClass="max-w-5xl"
         titleTop={
@@ -407,7 +496,9 @@ export default function ProductDrawer({
           {ordersLoading ? <div className="text-sm text-gray-600">Loading orders…</div> : null}
 
           {!ordersLoading && ordersData && !ordersData.ok ? (
-            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {ordersData.error || "UNKNOWN"}</div>
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
+              Error: {ordersData.error || "UNKNOWN"}
+            </div>
           ) : null}
 
           {!ordersLoading && ordersData?.ok ? (
@@ -452,7 +543,6 @@ export default function ProductDrawer({
         </div>
       </ModalShell>
 
-      {/* ✅ ORDER DETAIL MODAL */}
       <ModalShell
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
@@ -469,7 +559,9 @@ export default function ProductDrawer({
           {orderLoading ? <div className="text-sm text-gray-600">Loading order…</div> : null}
 
           {!orderLoading && orderData && !orderData.ok ? (
-            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {orderData.error || "UNKNOWN"}</div>
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
+              Error: {orderData.error || "UNKNOWN"}
+            </div>
           ) : null}
 
           {!orderLoading && orderData?.ok ? (
@@ -518,7 +610,6 @@ export default function ProductDrawer({
         </div>
       </ModalShell>
 
-      {/* ✅ AUDIT DETAIL MODAL */}
       <ModalShell
         open={auditOpen}
         onClose={() => setAuditOpen(false)}
@@ -540,7 +631,9 @@ export default function ProductDrawer({
           {auditLoading ? <div className="text-sm text-gray-600">Loading audit…</div> : null}
 
           {!auditLoading && auditData && !auditData.ok ? (
-            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">Error: {auditData.error || "UNKNOWN"}</div>
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-sm">
+              Error: {auditData.error || "UNKNOWN"}
+            </div>
           ) : null}
 
           {!auditLoading && auditData?.ok ? (
@@ -593,6 +686,7 @@ function Block({ title, children }: { title: string; children: any }) {
 function TH({ children, className = "" }: { children: any; className?: string }) {
   return <th className={["px-3 py-2 font-black", className].join(" ")}>{children}</th>;
 }
+
 function TD({
   children,
   className = "",
@@ -607,11 +701,17 @@ function TD({
   title?: string;
 }) {
   return (
-    <td colSpan={colSpan} className={["px-4 py-2 align-top text-[12px]", className].join(" ")} onClick={onClick} title={title}>
+    <td
+      colSpan={colSpan}
+      className={["px-4 py-2 align-top text-[12px]", className].join(" ")}
+      onClick={onClick}
+      title={title}
+    >
       {children}
     </td>
   );
 }
+
 function Info({ label, value }: { label: string; value: any }) {
   return (
     <div className="p-3 rounded-2xl border bg-white">

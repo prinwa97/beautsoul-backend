@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/session";
+import { apiHandler } from "@/lib/api-handler";
+import { badRequest, forbidden, notFound, unauthorized } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function jsonError(msg: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: msg, ...extra }, { status });
-}
 function str(v: any) {
   return String(v ?? "").trim();
 }
+
 function safeDate(s: any) {
   const d = new Date(String(s || ""));
   return Number.isFinite(d.getTime()) ? d : null;
@@ -18,25 +18,45 @@ function safeDate(s: any) {
 
 async function requireSalesManager() {
   const u: any = await getSessionUser();
-  if (!u) return { ok: false as const, status: 401 as const, error: "UNAUTHORIZED" };
+
+  if (!u) {
+    return { ok: false as const, status: 401 as const, error: "UNAUTHORIZED" };
+  }
+
   const role = String(u.role || "").toUpperCase();
-  if (role !== "SALES_MANAGER" && role !== "ADMIN")
+  if (role !== "SALES_MANAGER" && role !== "ADMIN") {
     return { ok: false as const, status: 403 as const, error: "FORBIDDEN" };
+  }
+
   return { ok: true as const, userId: String(u.id) };
 }
 
-export async function POST(req: Request) {
+export const POST = apiHandler(async function POST(req: Request) {
   const auth = await requireSalesManager();
-  if (!auth.ok) return jsonError(auth.error, auth.status);
+
+  if (!auth.ok) {
+    if (auth.status === 403) {
+      throw forbidden(auth.error);
+    }
+    throw unauthorized(auth.error);
+  }
 
   const body = await req.json().catch(() => null);
   const taskId = str(body?.taskId);
   const dueAt = safeDate(body?.dueAt);
   const remarkText = str(body?.remarkText);
 
-  if (!taskId) return jsonError("taskId required", 400);
-  if (!dueAt) return jsonError("dueAt required (ISO date)", 400);
-  if (!remarkText) return jsonError("remarkText required (mandatory)", 400);
+  if (!taskId) {
+    throw badRequest("taskId required");
+  }
+
+  if (!dueAt) {
+    throw badRequest("dueAt required (ISO date)");
+  }
+
+  if (!remarkText) {
+    throw badRequest("remarkText required (mandatory)");
+  }
 
   const smId = auth.userId;
 
@@ -44,17 +64,33 @@ export async function POST(req: Request) {
     where: { id: taskId, salesManagerId: smId },
     select: { id: true },
   });
-  if (!task) return jsonError("TASK_NOT_FOUND", 404);
+
+  if (!task) {
+    throw notFound("TASK_NOT_FOUND");
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.salesManagerTaskRemark.create({
-      data: { taskId, remarkText, qualityScore: 2, aiFeedback: "Rescheduled with remark." },
+      data: {
+        taskId,
+        remarkText,
+        qualityScore: 2,
+        aiFeedback: "Rescheduled with remark.",
+      },
     });
+
     await tx.salesManagerTask.update({
       where: { id: taskId },
-      data: { dueAt, status: "RESCHEDULED" },
+      data: {
+        dueAt,
+        status: "RESCHEDULED",
+      },
     });
   });
 
-  return NextResponse.json({ ok: true, taskId, dueAt: dueAt.toISOString() });
-}
+  return NextResponse.json({
+    ok: true,
+    taskId,
+    dueAt: dueAt.toISOString(),
+  });
+});
