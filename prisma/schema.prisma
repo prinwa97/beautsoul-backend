@@ -144,11 +144,11 @@ model Order {
   retailer          Retailer    @relation(fields: [retailerId], references: [id])
   items             OrderItem[]
 
-  @@index([distributorId, createdAt])
-  @@index([retailerId, createdAt])
-  @@index([status, createdAt])
-  @@index([createdAt])
   @@index([clientRequestHash])
+  @@index([distributorId])
+  @@index([idempotencyKey])
+  @@index([retailerId])
+  @@index([status])
 }
 
 model OrderItem {
