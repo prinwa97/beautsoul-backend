@@ -18,27 +18,37 @@ function cleanStr(v: any) {
 export async function GET(req: Request) {
   try {
     const u: any = await getSessionUser();
-    if (!u) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!u) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
 
     const role = String(u.role || "").toUpperCase();
-    if (role !== "FIELD_OFFICER") return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    if (role !== "FIELD_OFFICER") {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
 
     const distributorId = u.distributorId ? String(u.distributorId) : null;
-    if (!distributorId) return NextResponse.json({ ok: false, error: "Missing distributorId in session" }, { status: 400 });
+    if (!distributorId) {
+      return NextResponse.json({ ok: false, error: "Missing distributorId in session" }, { status: 400 });
+    }
 
     const { searchParams } = new URL(req.url);
     const retailerId = cleanStr(searchParams.get("retailerId"));
     const take = Math.min(100, Math.max(10, asInt(searchParams.get("take"), 30)));
     const skip = Math.max(0, asInt(searchParams.get("skip"), 0));
 
-    if (!retailerId) return NextResponse.json({ ok: false, error: "retailerId required" }, { status: 400 });
+    if (!retailerId) {
+      return NextResponse.json({ ok: false, error: "retailerId required" }, { status: 400 });
+    }
 
-    // Ensure retailer belongs to distributor
-    const okRetailer = await prisma.retailer.findFirst({
+    const retailer = await prisma.retailer.findFirst({
       where: { id: retailerId, distributorId },
       select: { id: true },
     });
-    if (!okRetailer) return NextResponse.json({ ok: false, error: "Retailer not found" }, { status: 404 });
+
+    if (!retailer) {
+      return NextResponse.json({ ok: false, error: "Retailer not found" }, { status: 404 });
+    }
 
     const total = await prisma.retailerLedger.count({
       where: { distributorId, retailerId },
@@ -46,7 +56,7 @@ export async function GET(req: Request) {
 
     const rows = await prisma.retailerLedger.findMany({
       where: { distributorId, retailerId },
-      orderBy: { date: "desc" },
+      orderBy: [{ date: "desc" }, { id: "desc" }],
       take,
       skip,
       select: {
@@ -62,6 +72,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, total, take, skip, rows });
   } catch (e: any) {
     console.error("FO collection ledger error:", e);
-    return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "Server error" },
+      { status: 500 }
+    );
   }
 }

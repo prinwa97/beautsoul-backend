@@ -23,9 +23,20 @@ function pad(n: number, len: number) {
 }
 
 function makeOrderNo() {
-  // Example: SMO + 10 digits
   const rnd = Math.floor(Math.random() * 1_000_000_0000);
   return "SMO" + pad(rnd, 10);
+}
+
+function hasPaymentEntered(order: any) {
+  return (
+    !!order?.paymentEnteredByUserId ||
+    !!order?.paymentMode ||
+    !!order?.utrNo ||
+    !!order?.paidAt ||
+    Number(order?.paidAmount || 0) > 0 ||
+    !!String(order?.paymentRemarks || "").trim() ||
+    String(order?.paymentStatus || "").toUpperCase() !== "UNPAID"
+  );
 }
 
 async function requireSalesManager() {
@@ -44,12 +55,17 @@ async function requireSalesManager() {
 
 /* -----------------------------
   GET
-  - /api/sales-manager/distributor-orders?meta=1  => products + distributors
+  - /api/sales-manager/distributor-orders?meta=1   => products + distributors
   - /api/sales-manager/distributor-orders?take=100 => orders
 ------------------------------ */
 export async function GET(req: Request) {
   try {
-    await requireSalesManager();
+    const sm = await requireSalesManager();
+    const smUserId = String((sm as any).userId || (sm as any).id || "").trim();
+
+    if (!smUserId) {
+      throw unauthorized("Invalid session");
+    }
 
     const { searchParams } = new URL(req.url);
     const meta = searchParams.get("meta");
@@ -57,36 +73,79 @@ export async function GET(req: Request) {
     const take = Math.max(1, Math.min(takeRaw || 100, 200));
 
     if (meta === "1") {
-      const [products, distributors] = await Promise.all([
-        prisma.productCatalog.findMany({
-          where: { isActive: true },
-          select: {
-            id: true,
-            name: true,
-            salePrice: true,
-            mrp: true,
-            isActive: true,
-          },
-          orderBy: { name: "asc" },
-        }),
-        prisma.distributor.findMany({
-          select: { id: true, name: true },
-          orderBy: { name: "asc" },
-        }),
-      ]);
+      try {
+        let products: Array<{
+          id: string;
+          name: string;
+          salePrice: number | null;
+          mrp: number | null;
+          isActive: boolean;
+        }> = [];
 
-      return NextResponse.json(
-        { ok: true, products, distributors },
-        { headers: NO_STORE_HEADERS }
-      );
+        let distributors: Array<{
+          id: string;
+          name: string;
+        }> = [];
+
+        try {
+          products = await prisma.productCatalog.findMany({
+            where: { isActive: true },
+            select: {
+              id: true,
+              name: true,
+              salePrice: true,
+              mrp: true,
+              isActive: true,
+            },
+            orderBy: { name: "asc" },
+          });
+        } catch (e: any) {
+          console.error("distributor-orders meta products query failed:", e);
+          throw new Error(`Products load failed: ${e?.message || "unknown error"}`);
+        }
+
+        try {
+          distributors = await prisma.distributor.findMany({
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          });
+        } catch (e: any) {
+          console.error("distributor-orders meta distributors query failed:", e);
+          throw new Error(`Distributors load failed: ${e?.message || "unknown error"}`);
+        }
+
+        return NextResponse.json(
+          { ok: true, products, distributors },
+          { headers: NO_STORE_HEADERS }
+        );
+      } catch (metaErr: any) {
+        console.error("distributor-orders meta=1 error:", metaErr);
+
+        return NextResponse.json(
+          {
+            ok: false,
+            error: metaErr?.message || "Failed to load metadata",
+            code: metaErr?.code || "META_LOAD_FAILED",
+          },
+          {
+            status: 500,
+            headers: NO_STORE_HEADERS,
+          }
+        );
+      }
     }
 
     const orders = await prisma.inboundOrder.findMany({
+      where: {
+        createdByUserId: smUserId,
+      },
       take,
       orderBy: { createdAt: "desc" },
       include: {
         distributor: { select: { id: true, name: true } },
         items: true,
+        dispatches: { select: { id: true } },
+        receives: { select: { id: true } },
       },
     });
 
@@ -97,9 +156,16 @@ export async function GET(req: Request) {
         return sum + rate * qty;
       }, 0);
 
+      const paymentEntered = hasPaymentEntered(o);
+      const hasDispatchOrReceive =
+        (o.dispatches?.length || 0) > 0 || (o.receives?.length || 0) > 0;
+
       return {
         ...o,
         totalAmount,
+        paymentEntered,
+        canEdit: !paymentEntered && !hasDispatchOrReceive,
+        canDelete: !paymentEntered && !hasDispatchOrReceive,
       };
     });
 
@@ -182,7 +248,10 @@ export async function POST(req: Request) {
     }
 
     const catalog = await prisma.productCatalog.findMany({
-      where: { name: { in: cleanItems.map((x) => x.productName) } },
+      where: {
+        name: { in: cleanItems.map((x) => x.productName) },
+        isActive: true,
+      },
       select: { name: true, salePrice: true, isActive: true },
     });
 
@@ -260,6 +329,9 @@ export async function POST(req: Request) {
         distributor: created.distributor,
         items: created.items,
         totalAmount,
+        paymentEntered: false,
+        canEdit: true,
+        canDelete: true,
       },
       {
         status: 201,

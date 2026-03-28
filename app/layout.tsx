@@ -1,9 +1,5 @@
-// app/layout.tsx
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "BeautSoul",

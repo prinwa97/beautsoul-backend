@@ -17,28 +17,47 @@ function csvEscape(v: any) {
 
 export async function GET(req: Request) {
   const u: any = await getSessionUser();
-  if (!u) return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401 });
+  if (!u) {
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), { status: 401 });
+  }
 
   const role = String(u.role || "").toUpperCase();
-  if (role !== "FIELD_OFFICER") return new Response(JSON.stringify({ ok: false, error: "Forbidden" }), { status: 403 });
+  if (role !== "FIELD_OFFICER") {
+    return new Response(JSON.stringify({ ok: false, error: "Forbidden" }), { status: 403 });
+  }
 
   const distributorId = u.distributorId ? String(u.distributorId) : null;
-  if (!distributorId) return new Response(JSON.stringify({ ok: false, error: "Missing distributorId in session" }), { status: 400 });
+  if (!distributorId) {
+    return new Response(JSON.stringify({ ok: false, error: "Missing distributorId in session" }), {
+      status: 400,
+    });
+  }
 
   const { searchParams } = new URL(req.url);
   const retailerId = cleanStr(searchParams.get("retailerId"));
-  if (!retailerId) return new Response(JSON.stringify({ ok: false, error: "retailerId required" }), { status: 400 });
+  if (!retailerId) {
+    return new Response(JSON.stringify({ ok: false, error: "retailerId required" }), { status: 400 });
+  }
 
   const retailer = await prisma.retailer.findFirst({
     where: { id: retailerId, distributorId },
     select: { id: true, name: true },
   });
-  if (!retailer) return new Response(JSON.stringify({ ok: false, error: "Retailer not found" }), { status: 404 });
+
+  if (!retailer) {
+    return new Response(JSON.stringify({ ok: false, error: "Retailer not found" }), { status: 404 });
+  }
 
   const rows = await prisma.retailerLedger.findMany({
     where: { distributorId, retailerId },
-    orderBy: { date: "desc" },
-    select: { date: true, type: true, amount: true, reference: true, narration: true },
+    orderBy: [{ date: "desc" }, { id: "desc" }],
+    select: {
+      date: true,
+      type: true,
+      amount: true,
+      reference: true,
+      narration: true,
+    },
   });
 
   const header = ["Date", "Type", "Amount", "Reference", "Narration"];
@@ -46,7 +65,10 @@ export async function GET(req: Request) {
 
   for (const r of rows) {
     const d = new Date(r.date);
-    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const ymd = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
+      d.getUTCDate()
+    ).padStart(2, "0")}`;
+
     lines.push(
       [
         csvEscape(ymd),
@@ -59,11 +81,13 @@ export async function GET(req: Request) {
   }
 
   const csv = lines.join("\n");
+  const safeName = retailer.name.replace(/[^a-z0-9\-_ ]/gi, "_");
+
   return new Response(csv, {
     status: 200,
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${retailer.name.replace(/[^a-z0-9\-_ ]/gi, "_")}-ledger.csv"`,
+      "Content-Disposition": `attachment; filename="${safeName}-ledger.csv"`,
     },
   });
 }

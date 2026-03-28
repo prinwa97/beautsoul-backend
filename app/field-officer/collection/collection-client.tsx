@@ -49,8 +49,24 @@ function todayYMD() {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function normalizeWhatsAppPhone(phone?: string | null) {
+  const digits = String(phone || "").replace(/\D/g, "");
+
+  if (!digits) return "";
+
+  // 10 digit Indian mobile -> add 91
+  if (digits.length === 10) return `91${digits}`;
+
+  // already with India code
+  if (digits.length === 12 && digits.startsWith("91")) return digits;
+
+  // fallback: return digits as-is
+  return digits;
+}
+
 function Icon({ name }: { name: "download" | "close" | "rupee" | "share" }) {
   const c = "h-5 w-5";
+
   if (name === "download")
     return (
       <svg className={c} viewBox="0 0 24 24" fill="none">
@@ -131,9 +147,9 @@ export default function CollectionPage() {
     setLoading(true);
     try {
       const r = await fetch(
-        `/api/field-officer/collections/retailers?q=${encodeURIComponent(nextQ)}&take=200&sort=${encodeURIComponent(
-          nextSort
-        )}`,
+        `/api/field-officer/collections/retailers?q=${encodeURIComponent(
+          nextQ
+        )}&take=200&sort=${encodeURIComponent(nextSort)}`,
         { cache: "no-store" }
       );
       const j = await r.json();
@@ -167,10 +183,13 @@ export default function CollectionPage() {
     setLedgerLoading(true);
     try {
       const res = await fetch(
-        `/api/field-officer/collections/ledger?retailerId=${encodeURIComponent(retailerId)}&take=${ledgerTake}&skip=${skip}`,
+        `/api/field-officer/collections/ledger?retailerId=${encodeURIComponent(
+          retailerId
+        )}&take=${ledgerTake}&skip=${skip}`,
         { cache: "no-store" }
       );
       const j = await res.json();
+
       if (!j?.ok) {
         setToast(j?.error || "Ledger load failed");
         return;
@@ -194,7 +213,6 @@ export default function CollectionPage() {
     }
   }
 
-  // running outstanding
   const ledgerWithBalance = useMemo(() => {
     const items = [...ledger];
     items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -252,6 +270,13 @@ export default function CollectionPage() {
       return;
     }
 
+    const phone = normalizeWhatsAppPhone(active.phone);
+
+    if (!phone) {
+      setToast("Retailer phone not available");
+      return;
+    }
+
     try {
       const text = [
         "🧾 BeautSoul Collection Summary",
@@ -262,28 +287,18 @@ export default function CollectionPage() {
         `Outstanding: ${inr(Math.abs(active.balance))}`,
         `Status: ${balanceLabel(active.balance)}`,
         ledgerWithBalance.length
-          ? `Last Entry: ${ymd(ledgerWithBalance[0].date)} | ${ledgerWithBalance[0].type} | ${inr(
-              Number(ledgerWithBalance[0].amount || 0)
-            )}`
+          ? `Last Entry: ${ymd(ledgerWithBalance[0].date)} | ${
+              ledgerWithBalance[0].type
+            } | ${inr(Number(ledgerWithBalance[0].amount || 0))}`
           : "Last Entry: -",
       ]
         .filter(Boolean)
         .join("\n");
 
-      if (navigator.share) {
-        await navigator.share({
-          title: `${active.name} Collection`,
-          text,
-        });
-        return;
-      }
-
-      const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+      const waUrl = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
       window.open(waUrl, "_blank", "noopener,noreferrer");
     } catch (e: any) {
-      if (e?.name !== "AbortError") {
-        setToast("Share failed");
-      }
+      setToast(e?.message || "Share failed");
     }
   }
 
@@ -295,6 +310,7 @@ export default function CollectionPage() {
       setToast("Enter valid amount");
       return;
     }
+
     if (mode !== "CASH" && !reference.trim()) {
       setToast("UTR / Reference required");
       return;
@@ -347,7 +363,6 @@ export default function CollectionPage() {
         </div>
       </div>
 
-      {/* Filters */}
       <div className="rounded-2xl border border-black/10 bg-white p-3 shadow-sm space-y-2">
         <input
           placeholder="Search retailer / city / phone…"
@@ -357,42 +372,43 @@ export default function CollectionPage() {
         />
 
         <div className="flex items-center gap-2">
-  <select
-    value={sort}
-    onChange={(e) => setSort(e.target.value as SortKey)}
-    className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none"
-  >
-    <option value="RECENT">Most recent</option>
-    <option value="OLDEST">Oldest</option>
-    <option value="HIGH">Highest amount</option>
-    <option value="LOW">Least amount</option>
-    <option value="NAME_AZ">Name A to Z</option>
-  </select>
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none"
+          >
+            <option value="RECENT">Most recent</option>
+            <option value="OLDEST">Oldest</option>
+            <option value="HIGH">Highest amount</option>
+            <option value="LOW">Least amount</option>
+            <option value="NAME_AZ">Name A to Z</option>
+          </select>
 
-  <button
-    type="button"
-    onClick={() => {
-      if (!active) {
-        setToast("Select retailer to download ledger");
-        return;
-      }
-      window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
-        active.retailerId
-      )}`;
-    }}
-    className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
-    title="Download selected retailer ledger"
-  >
-    <Icon name="download" />
-  </button>
-</div>
+          <button
+            type="button"
+            onClick={() => {
+              if (!active) {
+                setToast("Select retailer to download ledger");
+                return;
+              }
+              window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
+                active.retailerId
+              )}`;
+            }}
+            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
+            title="Download selected retailer ledger"
+          >
+            <Icon name="download" />
+          </button>
+        </div>
       </div>
 
       {toast ? (
-        <div className="rounded-2xl bg-black/5 px-4 py-3 text-sm font-semibold text-gray-800">{toast}</div>
+        <div className="rounded-2xl bg-black/5 px-4 py-3 text-sm font-semibold text-gray-800">
+          {toast}
+        </div>
       ) : null}
 
-      {/* Retailer list */}
       {loading ? (
         <div className="text-sm text-gray-500">Loading…</div>
       ) : compactRows.length ? (
@@ -435,11 +451,9 @@ export default function CollectionPage() {
         <div className="text-sm text-gray-500">No retailers found</div>
       )}
 
-      {/* Ledger Drawer */}
       {open && active && (
         <div className="fixed inset-0 z-50 flex items-end bg-black/40">
           <div className="w-full rounded-t-3xl bg-white shadow-2xl">
-            {/* Header */}
             <div className="p-4 pb-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -449,7 +463,9 @@ export default function CollectionPage() {
                     {active.phone ? ` • ${active.phone}` : ""}
                   </div>
                   <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-black/5 px-3 py-1 text-[11px] font-semibold">
-                    <span className={balanceColor(active.balance)}>{inr(Math.abs(active.balance))}</span>
+                    <span className={balanceColor(active.balance)}>
+                      {inr(Math.abs(active.balance))}
+                    </span>
                     <span className="text-gray-600">{balanceLabel(active.balance)}</span>
                   </div>
                 </div>
@@ -459,7 +475,7 @@ export default function CollectionPage() {
                     type="button"
                     onClick={shareRetailer}
                     className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
-                    title="Share retailer summary"
+                    title="Share on WhatsApp"
                   >
                     <Icon name="share" />
                   </button>
@@ -489,7 +505,6 @@ export default function CollectionPage() {
               </div>
             </div>
 
-            {/* Ledger box */}
             <div className="mx-4 rounded-2xl border border-black/10 bg-white">
               <div className="flex items-center justify-between border-b border-black/10 px-3 py-2">
                 <div className="text-xs font-semibold text-gray-700">
@@ -521,7 +536,9 @@ export default function CollectionPage() {
                                 {x.narration || (isCredit ? "Payment received" : "Debit")}
                               </div>
                               {x.reference ? (
-                                <div className="truncate text-[11px] text-gray-500">Ref: {x.reference}</div>
+                                <div className="truncate text-[11px] text-gray-500">
+                                  Ref: {x.reference}
+                                </div>
                               ) : null}
                             </div>
 
@@ -538,7 +555,11 @@ export default function CollectionPage() {
                               {isCredit ? (
                                 <div className="text-[10px] text-gray-500">
                                   Remaining: {inr(Number(x.balanceAfter || 0))}
-                                  {cleared ? <span className="ml-2 font-semibold text-green-700">✅ Cleared</span> : null}
+                                  {cleared ? (
+                                    <span className="ml-2 font-semibold text-green-700">
+                                      ✅ Cleared
+                                    </span>
+                                  ) : null}
                                 </div>
                               ) : (
                                 <div className="text-[10px] text-gray-500">{x.type}</div>
@@ -555,7 +576,6 @@ export default function CollectionPage() {
               </div>
             </div>
 
-            {/* Sticky bottom action bar */}
             <div
               className="sticky bottom-0 mt-4 border-t border-black/10 bg-white p-4"
               style={{
@@ -569,13 +589,14 @@ export default function CollectionPage() {
               >
                 Collect Payment
               </button>
-              <div className="mt-2 text-center text-[11px] text-gray-500">Button stays above bottom tabs</div>
+              <div className="mt-2 text-center text-[11px] text-gray-500">
+                Button stays above bottom tabs
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Collect Modal */}
       {collectOpen && active && (
         <div className="fixed inset-0 z-[60] flex items-end bg-black/40">
           <div className="w-full rounded-t-3xl bg-white p-4 pb-6 shadow-2xl">
@@ -675,7 +696,9 @@ export default function CollectionPage() {
             </div>
 
             {toast ? (
-              <div className="mt-3 rounded-2xl bg-black/5 px-4 py-3 text-sm font-semibold text-gray-800">{toast}</div>
+              <div className="mt-3 rounded-2xl bg-black/5 px-4 py-3 text-sm font-semibold text-gray-800">
+                {toast}
+              </div>
             ) : null}
 
             <div className="mt-4 grid grid-cols-2 gap-3">

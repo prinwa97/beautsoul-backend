@@ -40,15 +40,18 @@ function inr(n: number) {
     return String(n);
   }
 }
+
 function safe(n: any) {
   const x = Number(n);
   return Number.isFinite(x) ? x : 0;
 }
+
 function d(iso?: string | null) {
   if (!iso) return "-";
   const x = new Date(iso);
   return isNaN(+x) ? String(iso) : x.toLocaleString("en-IN");
 }
+
 function onlyDate(iso?: string | null) {
   if (!iso) return "";
   const x = new Date(iso);
@@ -59,15 +62,18 @@ function onlyDate(iso?: string | null) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
 type Row = {
   itemId: string;
   productName: string;
   orderedQty: number;
   dispatchQty: number;
-
   batchNo: string;
-  mfgDate: string; // yyyy-mm-dd
-  expiryDate: string; // yyyy-mm-dd
+  mfgDate: string;
+  expiryDate: string;
 };
 
 type TransportMode = "TRANSPORT" | "COURIER" | "BUS" | "SELF";
@@ -79,7 +85,6 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
   const [order, setOrder] = useState<Order | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
 
-  // transport details
   const [mode, setMode] = useState<TransportMode>("TRANSPORT");
   const [transportName, setTransportName] = useState("");
   const [trackingNo, setTrackingNo] = useState("");
@@ -92,9 +97,11 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
   async function load() {
     setLoading(true);
     setMsg(null);
+
     try {
       const r = await fetch(`/api/warehouse/inbound/${orderId}`, { cache: "no-store" });
       const j = await r.json();
+
       if (!r.ok) throw new Error(j?.error || "Load failed");
 
       const o: Order = j.order;
@@ -109,6 +116,7 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
         mfgDate: it.mfgDate ? onlyDate(it.mfgDate) : "",
         expiryDate: it.expiryDate ? onlyDate(it.expiryDate) : "",
       }));
+
       setRows(initial);
     } catch (e: any) {
       setMsg({ type: "err", text: e?.message || "Load failed" });
@@ -145,8 +153,6 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
 
     if (!dispatchDate) return "Dispatch date required.";
     if (!mode) return "Transport mode required.";
-
-    // ✅ Professional rule: carrier name + tracking required
     if (!transportName.trim()) return "Transport/Courier name required.";
     if (!trackingNo.trim()) return "LR/Tracking number required.";
     if (!parcels || parcels < 1) return "No. of parcels must be >= 1.";
@@ -174,7 +180,10 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
 
   async function submitDispatch() {
     const err = validate();
-    if (err) return setMsg({ type: "err", text: err });
+    if (err) {
+      setMsg({ type: "err", text: err });
+      return;
+    }
 
     try {
       setLoading(true);
@@ -200,7 +209,6 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
         })),
       };
 
-      // ✅ IMPORTANT: dispatch has separate endpoint to avoid payload clash with allocation
       const res = await fetch(`/api/warehouse/inbound/${orderId}/dispatch`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -223,303 +231,346 @@ export default function ProcessDispatchClient({ orderId }: { orderId: string }) 
   }
 
   return (
-    <div className="p-1">
-      {/* Top bar */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xl md:text-2xl font-semibold text-gray-800">Process / Dispatch</div>
-          <div className="text-xs text-gray-600 mt-1">
-            Fill batch + MFG + expiry for each item, then submit dispatch with transport details.
+    <div className="min-h-screen bg-gradient-to-b from-[#fff7f9] via-white to-[#fffaf6] text-gray-900">
+      <div className="mx-auto max-w-7xl px-4 py-5">
+        {/* Top bar */}
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="text-2xl font-bold text-gray-900">Process / Dispatch</div>
+              <div className="mt-1 text-sm text-gray-600">
+                Fill batch + MFG + expiry for each item, then submit dispatch with transport details.
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => (window.location.href = "/warehouse/inbound")}
+                type="button"
+                className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50"
+              >
+                Back
+              </button>
+
+              <button
+                onClick={load}
+                disabled={loading}
+                type="button"
+                className="rounded-xl bg-gradient-to-r from-pink-400 to-rose-400 px-4 py-2 text-sm font-semibold text-white shadow hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-2">
-          <button
-            onClick={() => (window.location.href = "/warehouse/inbound")}
-            className="px-3 py-2 rounded-xl border bg-white hover:bg-gray-50 text-sm"
+        {msg && (
+          <div
+            className={cx(
+              "mt-4 rounded-2xl border px-4 py-3 text-sm font-medium",
+              msg.type === "ok"
+                ? "border-green-200 bg-green-50 text-green-800"
+                : "border-red-200 bg-red-50 text-red-700"
+            )}
           >
-            Back
-          </button>
-          <button
-            onClick={load}
-            disabled={loading}
-            className="px-3 py-2 rounded-xl text-sm text-white shadow bg-gradient-to-r from-pink-400 to-rose-400 hover:opacity-90 disabled:opacity-60"
-          >
-            Refresh
-          </button>
-        </div>
-      </div>
+            {msg.text}
+          </div>
+        )}
 
-      {msg && (
-        <div
-          className={`mt-4 p-3 rounded-xl text-sm ${
-            msg.type === "ok" ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"
-          }`}
-        >
-          {msg.text}
-        </div>
-      )}
+        {/* Order summary */}
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Order</div>
+            <div className="mt-1 text-lg font-bold text-gray-900">{order?.orderNo || "-"}</div>
+            <div className="mt-2 text-sm text-gray-600">Created: {d(order?.createdAt)}</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Status: <span className="font-semibold text-gray-900">{order?.status || "-"}</span>
+            </div>
+          </div>
 
-      {/* Order summary */}
-      <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="text-xs text-gray-500">Order</div>
-          <div className="text-lg font-semibold text-gray-800 mt-1">{order?.orderNo || "-"}</div>
-          <div className="text-xs text-gray-500 mt-1">Created: {d(order?.createdAt)}</div>
-          <div className="text-xs text-gray-500 mt-1">
-            Status: <b className="text-gray-800">{order?.status || "-"}</b>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Distributor</div>
+            <div className="mt-1 text-lg font-bold text-gray-900">{order?.distributor?.name || "-"}</div>
+            <div className="mt-2 text-sm text-gray-600">
+              {order?.distributor?.city || "-"}
+              {order?.distributor?.state ? `, ${order.distributor.state}` : ""}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Payment Lock</div>
+            <div className="mt-2 text-sm text-gray-700">
+              Status: <span className="font-semibold text-gray-900">{order?.paymentStatus || "-"}</span>
+            </div>
+            <div className="mt-1 text-sm text-gray-700">
+              Verified: <span className="font-semibold text-gray-900">{order?.paymentVerified ? "YES" : "NO"}</span>
+            </div>
+            <div className="mt-1 text-sm text-gray-700">
+              Paid Amount: <span className="font-semibold text-gray-900">₹{inr(safe(order?.paidAmount))}</span>
+            </div>
+
+            {!canDispatch && (
+              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                Dispatch blocked until payment is PAID and verified.
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="text-xs text-gray-500">Distributor</div>
-          <div className="text-lg font-semibold text-gray-800 mt-1">{order?.distributor?.name || "-"}</div>
-          <div className="text-xs text-gray-500 mt-1">
-            {(order?.distributor?.city || "-")}
-            {order?.distributor?.state ? `, ${order.distributor.state}` : ""}
+        {/* KPI strip */}
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Ordered Qty (pcs)</div>
+            <div className="mt-1 text-xl font-bold text-gray-900">{inr(totals.ordered)}</div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Dispatch Qty (pcs)</div>
+            <div className="mt-1 text-xl font-bold text-gray-900">{inr(totals.dispatch)}</div>
+            {totals.dispatch !== totals.ordered && (
+              <div className="mt-1 text-xs font-medium text-amber-700">Short dispatch detected</div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Paid Amount</div>
+            <div className="mt-1 text-xl font-bold text-gray-900">₹{inr(totals.amount)}</div>
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white p-4">
-          <div className="text-xs text-gray-500">Payment Lock</div>
-          <div className="text-sm mt-2">
-            Status: <b className="text-gray-800">{order?.paymentStatus || "-"}</b>
-          </div>
-          <div className="text-sm mt-1">
-            Verified: <b className="text-gray-800">{order?.paymentVerified ? "YES" : "NO"}</b>
-          </div>
-          <div className="text-sm mt-1">
-            Paid Amount: <b className="text-gray-800">₹{inr(safe(order?.paidAmount))}</b>
+        {/* Items table */}
+        <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-pink-50 to-rose-50 px-4 py-3">
+            <div className="text-base font-semibold text-gray-900">Dispatch Items</div>
+            <div className="text-xs font-medium text-gray-600">{rows.length} items</div>
           </div>
 
-          {!canDispatch && <div className="mt-2 text-xs text-red-700">Dispatch blocked until payment is PAID and verified.</div>}
-        </div>
-      </div>
-
-      {/* KPI strip */}
-      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-2xl border bg-white p-3">
-          <div className="text-xs text-gray-500">Ordered Qty (pcs)</div>
-          <div className="text-lg font-semibold text-gray-800 mt-1">{inr(totals.ordered)}</div>
-        </div>
-        <div className="rounded-2xl border bg-white p-3">
-          <div className="text-xs text-gray-500">Dispatch Qty (pcs)</div>
-          <div className="text-lg font-semibold text-gray-800 mt-1">{inr(totals.dispatch)}</div>
-          {totals.dispatch !== totals.ordered && <div className="text-[11px] text-amber-700 mt-1">Short dispatch detected</div>}
-        </div>
-        <div className="rounded-2xl border bg-white p-3">
-          <div className="text-xs text-gray-500">Paid Amount</div>
-          <div className="text-lg font-semibold text-gray-800 mt-1">₹{inr(totals.amount)}</div>
-        </div>
-      </div>
-
-      {/* Items table */}
-      <div className="mt-4 border rounded-2xl overflow-hidden bg-white">
-        <div className="p-3 border-b bg-gradient-to-r from-pink-50 to-rose-50 flex justify-between items-center">
-          <div className="font-medium text-gray-800">Dispatch Items</div>
-          <div className="text-xs text-gray-600">{rows.length} items</div>
-        </div>
-
-        <div className="overflow-auto">
-          <table className="min-w-[1200px] w-full text-sm">
-            <thead className="bg-white text-gray-700">
-              <tr className="border-b">
-                <th className="text-left p-3">Product</th>
-                <th className="text-left p-3">Ordered (pcs)</th>
-                <th className="text-left p-3">Dispatch (pcs)</th>
-                <th className="text-left p-3">Batch No</th>
-                <th className="text-left p-3">MFG</th>
-                <th className="text-left p-3">Expiry</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.itemId} className="border-b hover:bg-pink-50/30">
-                  <td className="p-3">
-                    <div className="font-medium text-gray-800">{r.productName}</div>
-                  </td>
-
-                  <td className="p-3">{inr(r.orderedQty)}</td>
-
-                  <td className="p-3">
-                    <input
-                      type="number"
-                      min={0}
-                      max={r.orderedQty}
-                      value={r.dispatchQty}
-                      onChange={(e) => updateRow(r.itemId, { dispatchQty: safe(e.target.value) })}
-                      className="border rounded-xl px-3 py-2 text-sm w-[140px]"
-                      disabled={!canDispatch || loading}
-                    />
-                  </td>
-
-                  <td className="p-3">
-                    <input
-                      value={r.batchNo}
-                      onChange={(e) => updateRow(r.itemId, { batchNo: e.target.value })}
-                      placeholder="Batch no"
-                      className="border rounded-xl px-3 py-2 text-sm w-[180px]"
-                      disabled={!canDispatch || loading || r.dispatchQty === 0}
-                    />
-                  </td>
-
-                  <td className="p-3">
-                    <input
-                      type="date"
-                      value={r.mfgDate}
-                      onChange={(e) => updateRow(r.itemId, { mfgDate: e.target.value })}
-                      className="border rounded-xl px-3 py-2 text-sm w-[160px]"
-                      disabled={!canDispatch || loading || r.dispatchQty === 0}
-                    />
-                  </td>
-
-                  <td className="p-3">
-                    <input
-                      type="date"
-                      value={r.expiryDate}
-                      onChange={(e) => updateRow(r.itemId, { expiryDate: e.target.value })}
-                      className="border rounded-xl px-3 py-2 text-sm w-[160px]"
-                      disabled={!canDispatch || loading || r.dispatchQty === 0}
-                    />
-                  </td>
+          <div className="overflow-auto">
+            <table className="min-w-[1200px] w-full text-sm">
+              <thead className="bg-white">
+                <tr className="border-b border-gray-200 text-left text-sm font-semibold text-gray-700">
+                  <th className="p-3">Product</th>
+                  <th className="p-3">Ordered (pcs)</th>
+                  <th className="p-3">Dispatch (pcs)</th>
+                  <th className="p-3">Batch No</th>
+                  <th className="p-3">MFG</th>
+                  <th className="p-3">Expiry</th>
                 </tr>
-              ))}
+              </thead>
 
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-6 text-center text-gray-600">
-                    No items found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              <tbody className="text-gray-900">
+                {rows.map((r) => (
+                  <tr key={r.itemId} className="border-b border-gray-100 hover:bg-pink-50/30">
+                    <td className="p-3">
+                      <div className="font-semibold text-gray-900">{r.productName}</div>
+                    </td>
 
-        <div className="p-3 text-[11px] text-gray-500">
-          Tip: If any item is not dispatching today, set Dispatch Qty to 0. Batch/MFG/Expiry will become optional for that row.
-        </div>
-      </div>
+                    <td className="p-3 font-medium text-gray-800">{inr(r.orderedQty)}</td>
 
-      {/* Transport section */}
-      <div className="mt-4 rounded-2xl border bg-white overflow-hidden">
-        <div className="p-3 border-b bg-gradient-to-r from-pink-50 to-rose-50">
-          <div className="font-medium text-gray-800">Transport / Parcel Details</div>
-          <div className="text-xs text-gray-600 mt-1">This information will be stored with the dispatch record.</div>
-        </div>
+                    <td className="p-3">
+                      <input
+                        type="number"
+                        min={0}
+                        max={r.orderedQty}
+                        value={r.dispatchQty}
+                        onChange={(e) => updateRow(r.itemId, { dispatchQty: safe(e.target.value) })}
+                        className="w-[140px] rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black"
+                        disabled={!canDispatch || loading}
+                      />
+                    </td>
 
-        <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">Dispatch Date</div>
-            <input
-              type="date"
-              value={dispatchDate}
-              readOnly
-              className="border rounded-xl px-3 py-2 text-sm bg-gray-100 w-full cursor-not-allowed"
-            />
+                    <td className="p-3">
+                      <input
+                        value={r.batchNo}
+                        onChange={(e) => updateRow(r.itemId, { batchNo: e.target.value })}
+                        placeholder="Batch no"
+                        className="w-[180px] rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                        disabled={!canDispatch || loading || r.dispatchQty === 0}
+                      />
+                    </td>
+
+                    <td className="p-3">
+                      <input
+                        type="date"
+                        value={r.mfgDate}
+                        onChange={(e) => updateRow(r.itemId, { mfgDate: e.target.value })}
+                        className="w-[160px] rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                        disabled={!canDispatch || loading || r.dispatchQty === 0}
+                      />
+                    </td>
+
+                    <td className="p-3">
+                      <input
+                        type="date"
+                        value={r.expiryDate}
+                        onChange={(e) => updateRow(r.itemId, { expiryDate: e.target.value })}
+                        className="w-[160px] rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                        disabled={!canDispatch || loading || r.dispatchQty === 0}
+                      />
+                    </td>
+                  </tr>
+                ))}
+
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-sm font-medium text-gray-500">
+                      No items found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
 
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">Mode</div>
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as TransportMode)}
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            >
-              <option value="TRANSPORT">Transport</option>
-              <option value="COURIER">Courier</option>
-              <option value="BUS">Bus</option>
-              <option value="SELF">Self</option>
-            </select>
-          </div>
-
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">Transport / Courier Name</div>
-            <input
-              value={transportName}
-              onChange={(e) => setTransportName(e.target.value)}
-              placeholder="e.g. Delhivery / VRL / Local Transport"
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            />
-          </div>
-
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">LR / Tracking No</div>
-            <input
-              value={trackingNo}
-              onChange={(e) => setTrackingNo(e.target.value)}
-              placeholder="LR / Tracking"
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            />
-          </div>
-
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">No. of Parcels</div>
-            <input
-              type="number"
-              min={1}
-              value={parcels}
-              onChange={(e) => setParcels(safe(e.target.value))}
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            />
-          </div>
-
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">Driver/Person (optional)</div>
-            <input
-              value={driverName}
-              onChange={(e) => setDriverName(e.target.value)}
-              placeholder="Driver / Person name"
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            />
-          </div>
-
-          <div>
-            <div className="text-[11px] text-gray-500 mb-1">Phone (optional)</div>
-            <input
-              value={driverPhone}
-              onChange={(e) => setDriverPhone(e.target.value)}
-              placeholder="Mobile"
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <div className="text-[11px] text-gray-500 mb-1">Notes (optional)</div>
-            <input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Any special handling / remarks"
-              className="border rounded-xl px-3 py-2 text-sm bg-white w-full"
-              disabled={!canDispatch || loading}
-            />
+          <div className="border-t border-gray-100 px-4 py-3 text-xs text-gray-500">
+            Tip: If any item is not dispatching today, set Dispatch Qty to 0. Batch/MFG/Expiry will become optional for that row.
           </div>
         </div>
 
-        <div className="p-4 border-t flex items-center justify-end gap-2">
-          <button className="px-3 py-2 rounded-xl border bg-white hover:bg-gray-50" onClick={() => load()} disabled={loading}>
-            Reset Form
-          </button>
+        {/* Transport section */}
+        <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+          <div className="border-b border-gray-200 bg-gradient-to-r from-pink-50 to-rose-50 px-4 py-3">
+            <div className="text-base font-semibold text-gray-900">Transport / Parcel Details</div>
+            <div className="mt-1 text-sm text-gray-600">
+              This information will be stored with the dispatch record.
+            </div>
+          </div>
 
-          <button
-            className={`px-4 py-2 rounded-xl text-white shadow ${
-              canDispatch
-                ? "bg-gradient-to-r from-pink-400 to-rose-400 hover:opacity-90"
-                : "bg-gray-200 text-gray-500 shadow-none cursor-not-allowed"
-            }`}
-            disabled={!canDispatch || loading}
-            onClick={submitDispatch}
-            title={canDispatch ? "Submit dispatch" : "Payment must be PAID & verified"}
-          >
-            Submit Dispatch
-          </button>
+          <div className="grid grid-cols-1 gap-3 p-4 text-sm md:grid-cols-3">
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">Dispatch Date</div>
+              <input
+                type="date"
+                value={dispatchDate}
+                readOnly
+                className="w-full cursor-not-allowed rounded-xl border border-gray-300 bg-gray-100 px-3 py-2 text-sm text-gray-700"
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">Mode</div>
+              <select
+                value={mode}
+                onChange={(e) => setMode(e.target.value as TransportMode)}
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              >
+                <option value="TRANSPORT">Transport</option>
+                <option value="COURIER">Courier</option>
+                <option value="BUS">Bus</option>
+                <option value="SELF">Self</option>
+              </select>
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">Transport / Courier Name</div>
+              <input
+                value={transportName}
+                onChange={(e) => setTransportName(e.target.value)}
+                placeholder="e.g. Delhivery / VRL / Local Transport"
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">LR / Tracking No</div>
+              <input
+                value={trackingNo}
+                onChange={(e) => setTrackingNo(e.target.value)}
+                placeholder="LR / Tracking"
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">No. of Parcels</div>
+              <input
+                type="number"
+                min={1}
+                value={parcels}
+                onChange={(e) => setParcels(safe(e.target.value))}
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">Driver/Person (optional)</div>
+              <input
+                value={driverName}
+                onChange={(e) => setDriverName(e.target.value)}
+                placeholder="Driver / Person name"
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-gray-500">Phone (optional)</div>
+              <input
+                value={driverPhone}
+                onChange={(e) => setDriverPhone(e.target.value)}
+                placeholder="Mobile"
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <div className="mb-1 text-xs font-medium text-gray-500">Notes (optional)</div>
+              <input
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Any special handling / remarks"
+                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                disabled={!canDispatch || loading}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Sticky bottom action bar */}
+        <div className="sticky bottom-0 mt-4">
+          <div className="rounded-2xl border border-gray-200 bg-white/95 p-4 shadow-lg backdrop-blur">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-gray-900">Dispatch Summary</div>
+                <div className="mt-1 text-sm text-gray-600">
+                  Ordered: <span className="font-semibold text-gray-900">{inr(totals.ordered)}</span> • Dispatch:{" "}
+                  <span className="font-semibold text-gray-900">{inr(totals.dispatch)}</span> • Paid Amount:{" "}
+                  <span className="font-semibold text-gray-900">₹{inr(totals.amount)}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+                  onClick={() => load()}
+                  disabled={loading}
+                  type="button"
+                >
+                  Reset Form
+                </button>
+
+                <button
+                  className={cx(
+                    "rounded-xl px-5 py-2.5 text-sm font-semibold text-white shadow",
+                    canDispatch
+                      ? "bg-gradient-to-r from-pink-400 to-rose-400 hover:opacity-90"
+                      : "cursor-not-allowed bg-gray-300 text-gray-500 shadow-none"
+                  )}
+                  disabled={!canDispatch || loading}
+                  onClick={submitDispatch}
+                  type="button"
+                  title={canDispatch ? "Submit dispatch" : "Payment must be PAID & verified"}
+                >
+                  {loading ? "Submitting..." : "Submit Dispatch"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

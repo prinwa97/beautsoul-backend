@@ -30,7 +30,10 @@ type CreatedOrder = {
 
 type CreatedItem = {
   productId: string;
+  productName: string;
   qty: number;
+  rate: number;
+  amount: number;
 };
 
 function inr(n: number) {
@@ -65,6 +68,64 @@ function normalizeIndianPhone(v: string) {
   if (d.length === 12 && d.startsWith("91")) return d;
   if (d.length > 10) return `91${d.slice(-10)}`;
   return d;
+}
+
+function n(v: any) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
+
+function normalizeCreatedItemsFromResponse(
+  responseOrder: any,
+  fallbackItems: { productId: string; qty: number }[],
+  products: ProductRow[]
+): CreatedItem[] {
+  const orderItems = Array.isArray(responseOrder?.items) ? responseOrder.items : [];
+
+  if (orderItems.length > 0) {
+    return orderItems.map((it: any) => {
+      const productId = cleanStr(it?.productId || it?.id || "");
+      const productName = cleanStr(it?.productName || it?.name || productId || "Product");
+      const qty = Math.max(
+        0,
+        Math.floor(
+          n(
+            it?.qty ??
+              it?.orderedQtyPcs ??
+              it?.quantity ??
+              it?.pcs ??
+              0
+          )
+        )
+      );
+      const rate = n(it?.rate ?? it?.saleRate ?? it?.price ?? 0);
+      const amount = n(it?.amount ?? it?.lineTotal ?? qty * rate);
+
+      return {
+        productId,
+        productName,
+        qty,
+        rate,
+        amount,
+      };
+    });
+  }
+
+  return fallbackItems.map((it) => {
+    const product = products.find((p) => p.id === it.productId);
+    const productName = cleanStr(product?.name || it.productId);
+    const qty = Math.max(0, Math.floor(Number(it.qty || 0)));
+    const rate = 0;
+    const amount = 0;
+
+    return {
+      productId: it.productId,
+      productName,
+      qty,
+      rate,
+      amount,
+    };
+  });
 }
 
 function Icon({
@@ -271,26 +332,13 @@ export default function FieldOfficerOrdersPage() {
     router.push(`/field-officer/orders/history?retailerId=${active.retailerId}`);
   }
 
-  function getProductById(productId: string) {
-    return products.find((p) => p.id === productId) || null;
-  }
-
-  function getCreatedGrandTotal() {
-    return createdItems.reduce((sum, it) => {
-      const product = getProductById(it.productId);
-      const rate = Number(product?.mrp || 0);
-      return sum + rate * Math.max(0, Math.floor(Number(it.qty || 0)));
-    }, 0);
-  }
-
   function buildOrderLines(mode: "WHATSAPP" | "SMS") {
     return createdItems
       .map((it, idx) => {
-        const product = getProductById(it.productId);
-        const productName = cleanStr(product?.name || it.productId);
+        const productName = cleanStr(it.productName || it.productId);
         const qty = Math.max(0, Math.floor(Number(it.qty || 0)));
-        const rate = Number(product?.mrp || 0);
-        const lineTotal = rate * qty;
+        const rate = Number(it.rate || 0);
+        const lineTotal = Number(it.amount || rate * qty);
 
         if (mode === "WHATSAPP") {
           return [
@@ -304,6 +352,12 @@ export default function FieldOfficerOrdersPage() {
         )} | Total: ${inr(lineTotal)}`;
       })
       .join(mode === "WHATSAPP" ? "\n\n" : "\n");
+  }
+
+  function getCreatedGrandTotal() {
+    return createdItems.reduce((sum, it) => {
+      return sum + Number(it.amount || Number(it.rate || 0) * Number(it.qty || 0));
+    }, 0);
   }
 
   function buildWhatsAppMessage() {
@@ -393,7 +447,7 @@ export default function FieldOfficerOrdersPage() {
     if (!active) return;
     if (savingOrder) return;
 
-    const items: CreatedItem[] = Object.entries(qtyMap)
+    const items: { productId: string; qty: number }[] = Object.entries(qtyMap)
       .filter(([_, qv]) => Number(qv) > 0)
       .map(([productId, qty]) => ({
         productId,
@@ -430,8 +484,14 @@ export default function FieldOfficerOrdersPage() {
         orderNo: j?.order?.orderNo,
       };
 
+      const normalizedCreatedItems = normalizeCreatedItemsFromResponse(
+        j?.order,
+        items,
+        products
+      );
+
       setCreatedOrder(order);
-      setCreatedItems(items);
+      setCreatedItems(normalizedCreatedItems);
       setCreateOpen(false);
       setOpen(false);
       setShareOpen(true);
@@ -603,7 +663,7 @@ export default function FieldOfficerOrdersPage() {
                     <div className="min-w-0 pr-3">
                       <div className="text-sm font-semibold">{p.name}</div>
                       <div className="text-xs text-gray-500">
-                        Rate: {inr(Number(p.mrp || 0))}
+                        MRP: {inr(Number(p.mrp || 0))}
                       </div>
                     </div>
 
@@ -694,15 +754,14 @@ export default function FieldOfficerOrdersPage() {
 
               <div className="mt-2 space-y-2">
                 {createdItems.map((it) => {
-                  const product = getProductById(it.productId);
-                  const name = cleanStr(product?.name || it.productId);
+                  const name = cleanStr(it.productName || it.productId);
                   const qty = Math.max(0, Math.floor(Number(it.qty || 0)));
-                  const rate = Number(product?.mrp || 0);
-                  const total = qty * rate;
+                  const rate = Number(it.rate || 0);
+                  const total = Number(it.amount || qty * rate);
 
                   return (
                     <div
-                      key={it.productId}
+                      key={`${it.productId}-${name}`}
                       className="rounded-xl border border-black/10 bg-black/[0.02] p-3"
                     >
                       <div className="text-sm font-bold text-gray-900">{name}</div>

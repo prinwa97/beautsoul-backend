@@ -33,7 +33,6 @@ export default function LoginPage() {
 
       if (!res.ok) {
         setMsg({ type: "err", text: data?.error || "Login failed" });
-        setLoading(false);
         return;
       }
 
@@ -50,6 +49,7 @@ export default function LoginPage() {
       router.refresh();
     } catch (err: unknown) {
       setMsg({ type: "err", text: err instanceof Error ? err.message : "Network error" });
+    } finally {
       setLoading(false);
     }
   }
@@ -62,14 +62,19 @@ export default function LoginPage() {
         className="absolute top-6 left-6 h-16 w-auto object-contain"
       />
 
-      <form onSubmit={submit} className="w-full max-w-sm bg-white border rounded-2xl p-6 shadow">
-        <h1 className="text-xl font-bold">BeautSoul Login</h1>
-        <p className="text-sm text-gray-600 mt-1">Enter phone & password</p>
+      <form
+        onSubmit={submit}
+        className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-md text-gray-900"
+      >
+        <h1 className="text-2xl font-bold text-gray-900">BeautSoul Login</h1>
+        <p className="mt-1 text-sm text-gray-600">Enter phone & password</p>
 
         {msg && (
           <div
-            className={`mt-4 p-3 rounded-xl text-sm font-semibold border ${
-              msg.type === "ok" ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
+            className={`mt-4 rounded-xl border p-3 text-sm font-semibold ${
+              msg.type === "ok"
+                ? "border-green-200 bg-green-50 text-green-700"
+                : "border-red-200 bg-red-50 text-red-700"
             }`}
           >
             {msg.text}
@@ -77,11 +82,11 @@ export default function LoginPage() {
         )}
 
         <div className="mt-4">
-          <label className="text-sm font-semibold">Phone</label>
+          <label className="text-sm font-semibold text-gray-800">Phone</label>
           <input
             value={phone}
             onChange={(e) => setPhone(only10Digits(e.target.value))}
-            className="mt-1 w-full border rounded-xl px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
             placeholder="10 digit mobile"
             inputMode="numeric"
             maxLength={10}
@@ -90,11 +95,11 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-4">
-          <label className="text-sm font-semibold">Password</label>
+          <label className="text-sm font-semibold text-gray-800">Password</label>
           <input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full border rounded-xl px-3 py-2"
+            className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
             placeholder="Password"
             type="password"
             required
@@ -103,7 +108,7 @@ export default function LoginPage() {
 
         <button
           disabled={loading}
-          className="mt-5 w-full rounded-xl bg-black text-white py-2 font-bold disabled:opacity-60"
+          className="mt-5 w-full rounded-xl bg-black py-2 font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Logging in..." : "Login"}
         </button>

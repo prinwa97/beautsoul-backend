@@ -1,30 +1,37 @@
-// /Users/beautsoul/Documents/beautsoul-app/beautsoul-backend/app/sales-manager/create-user/create-user-form.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import PincodeAutoFill from "@/components/PincodeAutoFill";
-import type { Dist, RoleKey, CreateUserFormState } from "./types";
 
-export default function CreateUserForm({
-  role,
-  setRole,
-  dists,
-  distsLoading,
-  distId,
-  setDistId,
-}: {
-  role: RoleKey;
-  setRole: (r: RoleKey) => void;
-  dists: Dist[];
-  distsLoading: boolean;
-  distId: string;
-  setDistId: (id: string) => void;
-}) {
-  // ✅ only for submit (create/update). DO NOT use this for edit-open loading
+function onlyDigits(v: string) {
+  return (v || "").replace(/\D/g, "");
+}
+
+function validPhone(v: string) {
+  return /^\d{10}$/.test(v);
+}
+
+function validGST(gst: string) {
+  return /^[0-9A-Z]{15}$/.test(gst);
+}
+
+async function safeJson(res: Response) {
+  const txt = await res.text().catch(() => "");
+  try {
+    return JSON.parse(txt);
+  } catch {
+    return {};
+  }
+}
+
+export default function CreateUserForm(props: any) {
+  const { role, setRole, dists, distsLoading, distId, setDistId } = props;
+
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
+  const [success, setSuccess] = useState("");
 
-  const [f, setF] = useState<CreateUserFormState>({
+  const [f, setF] = useState({
     name: "",
     phone: "",
     pincode: "",
@@ -36,29 +43,17 @@ export default function CreateUserForm({
     password: "",
   });
 
-  const showDistributorPicker = role === "RETAILER" || role === "FIELD_OFFICER";
-  const showAddress = role === "RETAILER" || role === "FIELD_OFFICER";
-  const showGstField = role === "DISTRIBUTOR" || role === "RETAILER";
+  const showDistributorPicker = role !== "DISTRIBUTOR";
+  const showAddress = role !== "DISTRIBUTOR";
+  const showGstField = role !== "FIELD_OFFICER";
 
-  // ✅ IMPORTANT FIX: Retailer/FO me agar distId blank ho aur dists aa gaye ho => auto select first
   useEffect(() => {
-    if (!showDistributorPicker) return;
-    if (distsLoading) return;
-    if (distId) return;
-    if (dists.length === 0) return;
+    if (showDistributorPicker && !distId && dists.length > 0) {
+      setDistId(dists[0].id);
+    }
+  }, [showDistributorPicker, dists, distId]);
 
-    setDistId(dists[0].id);
-  }, [showDistributorPicker, distsLoading, distId, dists, setDistId]);
-
-  const distLabel = useMemo(() => {
-    const d = dists.find((x) => x.id === distId);
-    if (!d) return "";
-    const code = d.code ? ` (${d.code})` : "";
-    const loc = [d.city, d.state].filter(Boolean).join(", ");
-    return `${d.name}${code}${loc ? ` — ${loc}` : ""}`;
-  }, [dists, distId]);
-
-  function setField<K extends keyof CreateUserFormState>(key: K, val: CreateUserFormState[K]) {
+  function setField(key: any, val: any) {
     setF((p) => ({ ...p, [key]: val }));
   }
 
@@ -76,73 +71,42 @@ export default function CreateUserForm({
     });
   }
 
-  function extractSuccessDetails(data: any, role: RoleKey, fallbackPhone: string) {
-    const title =
-      role === "DISTRIBUTOR" ? "Distributor created!" : role === "RETAILER" ? "Retailer created!" : "Field Officer created!";
-
-    // Try common variants in your APIs; fallback to "-"
-    const code =
-      data?.distributorCode ??
-      data?.retailerCode ??
-      data?.fieldOfficerCode ??
-      data?.code ??
-      data?.userCode ??
-      data?.user?.code ??
-      data?.user?.username ??
-      "-";
-
-    const loginPhone =
-      data?.loginPhone ??
-      data?.phone ??
-      data?.user?.phone ??
-      data?.user?.mobile ??
-      fallbackPhone ??
-      "-";
-
-    const createdId =
-      data?.id ??
-      data?.userId ??
-      data?.user?.id ??
-      data?.retailer?.id ??
-      data?.distributor?.id ??
-      data?.fieldOfficer?.id ??
-      "-";
-
-    return { title, code, loginPhone, createdId };
-  }
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting) return; // 🚀 prevent double click
+
     setErr("");
+    setSuccess("");
 
     const nm = f.name.trim();
-    const ph = f.phone.trim();
+    const ph = onlyDigits(f.phone);
     const pw = f.password.trim();
     const gst = f.gstinOrGst.trim();
 
     if (!nm) return setErr("Name required");
-    if (!ph) return setErr("Phone required");
-    if (!pw || pw.length < 6) return setErr("Password min 6 required");
+    if (!validPhone(ph)) return setErr("Valid 10-digit phone required");
+    if (pw.length < 6) return setErr("Password min 6 chars");
 
-    if (showDistributorPicker) {
-      if (distsLoading) return setErr("Distributors loading...");
-      if (!distId) return setErr("Please select distributor");
-      if (dists.length === 0) return setErr("No distributors found. Please create distributor first.");
+    if (showDistributorPicker && !distId) {
+      return setErr("Select distributor");
     }
 
-    if (role === "DISTRIBUTOR" && !gst) return setErr("GST required");
+    if (role === "DISTRIBUTOR") {
+      if (!validGST(gst)) return setErr("Valid GSTIN required");
+    }
 
     setSubmitting(true);
+
     try {
       let url = "";
       const payload: any = {
         name: nm,
         phone: ph,
+        password: pw,
         pincode: f.pincode,
         city: f.city,
         district: f.district,
         state: f.state,
-        password: pw,
       };
 
       if (role === "DISTRIBUTOR") {
@@ -163,204 +127,103 @@ export default function CreateUserForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        // ✅ safer for auth cookies in some setups (localhost vs IP etc.)
         credentials: "include",
       });
 
-      const data = await res.json().catch(() => null);
-
-      // ✅ Debug response shape if needed
-      // console.log("CREATE USER RESP:", data);
+      const data = await safeJson(res);
 
       if (!res.ok || !data?.ok) {
-        setErr(String(data?.error || data?.message || "Create failed"));
-        return;
+        throw new Error(data?.error || "Create failed");
       }
 
-      const { title, code, loginPhone, createdId } = extractSuccessDetails(data, role, ph);
-      alert(`${title}\nID: ${createdId}\nCode: ${code}\nLogin Phone: ${loginPhone}`);
-
+      setSuccess("✅ User created successfully");
       resetForm();
-      if (role === "DISTRIBUTOR") setDistId("");
     } catch (e: any) {
-      setErr(String(e?.message || "Network error"));
+      setErr(e.message);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <>
-      {/* selectors */}
-      <div className="bg-white border border-pink-100 rounded-2xl p-4 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs font-semibold text-gray-700">User Type</label>
-            <select
-              value={role}
-              onChange={(e) => {
-                const next = e.target.value as RoleKey;
-                setRole(next);
-                setErr("");
-                if (next === "DISTRIBUTOR") setDistId("");
-              }}
-              disabled={submitting}
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
-            >
-              <option value="RETAILER">Retailer</option>
-              <option value="DISTRIBUTOR">Distributor</option>
-              <option value="FIELD_OFFICER">Field Officer</option>
-            </select>
+    <form onSubmit={onSubmit} className="space-y-4 text-gray-900">
+      <h2 className="text-xl font-bold">Create User</h2>
 
-            <div className="mt-1 text-[11px] text-gray-500">
-              {role === "DISTRIBUTOR"
-                ? "Distributor create: GST required."
-                : role === "RETAILER"
-                ? "Retailer create: distributor selection required."
-                : "Field Officer create: distributor selection required."}
-            </div>
-          </div>
+      {err && <div className="bg-red-50 text-red-700 p-3 rounded-xl">{err}</div>}
+      {success && <div className="bg-green-50 text-green-700 p-3 rounded-xl">{success}</div>}
 
-          <div className={showDistributorPicker ? "" : "opacity-50"}>
-            <label className="text-xs font-semibold text-gray-700">Distributor</label>
+      <input
+        placeholder="Name"
+        value={f.name}
+        onChange={(e) => setField("name", e.target.value)}
+        className="input"
+      />
 
-            <select
-              value={distId}
-              onChange={(e) => setDistId(e.target.value)}
-              disabled={!showDistributorPicker || distsLoading || submitting}
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
-            >
-              <option value="">
-                {distsLoading
-                  ? "Loading distributors..."
-                  : dists.length === 0
-                  ? "No distributors found"
-                  : "Select distributor"}
-              </option>
+      <input
+        placeholder="Phone"
+        value={f.phone}
+        onChange={(e) => setField("phone", onlyDigits(e.target.value))}
+        className="input"
+      />
 
-              {dists.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                  {d.code ? ` (${d.code})` : ""}
-                  {d.city ? ` — ${d.city}` : ""}
-                  {d.state ? `, ${d.state}` : ""}
-                </option>
-              ))}
-            </select>
-
-            <div className="mt-1 text-[11px] text-gray-500">
-              {!showDistributorPicker
-                ? "Not required for Distributor."
-                : distsLoading
-                ? "Loading distributors..."
-                : distLabel
-                ? `Selected: ${distLabel}`
-                : dists.length === 0
-                ? "Please create/activate a distributor first."
-                : "Please select a distributor."}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* create form */}
-      <form onSubmit={onSubmit} className="mt-4 bg-white border border-pink-100 rounded-2xl p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <h2 className="text-lg font-black text-gray-900">
-            {role === "DISTRIBUTOR" ? "Create Distributor" : role === "RETAILER" ? "Create Retailer" : "Create Field Officer"}
-          </h2>
-          <div className="text-[11px] text-gray-500">Pincode auto-fill supported</div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-semibold text-gray-700">
-              {role === "DISTRIBUTOR" ? "Distributor Name" : role === "RETAILER" ? "Retailer Name" : "Name"}
-            </label>
-            <input
-              value={f.name}
-              onChange={(e) => setField("name", e.target.value)}
-              placeholder={role === "DISTRIBUTOR" ? "Distributor name" : role === "RETAILER" ? "Retailer name" : "Field officer name"}
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
-              disabled={submitting}
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-gray-700">Phone</label>
-            <input
-              value={f.phone}
-              onChange={(e) => setField("phone", e.target.value)}
-              placeholder="10-digit phone"
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
-              disabled={submitting}
-            />
-          </div>
-        </div>
-
-        {showGstField && (
-          <div>
-            <label className="text-xs font-semibold text-gray-700">{role === "DISTRIBUTOR" ? "GSTIN" : "GST (optional)"}</label>
-            <input
-              value={f.gstinOrGst}
-              onChange={(e) => setField("gstinOrGst", e.target.value.toUpperCase())}
-              placeholder={role === "DISTRIBUTOR" ? "GSTIN (required)" : "GSTIN (optional)"}
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
-              disabled={submitting}
-            />
-          </div>
-        )}
-
-        <PincodeAutoFill
-          pincode={f.pincode}
-          setPincode={(v) => setField("pincode", v)}
-          city={f.city}
-          setCity={(v) => setField("city", v)}
-          district={f.district}
-          setDistrict={(v) => setField("district", v)}
-          state={f.state}
-          setState={(v) => setField("state", v)}
-          disabled={submitting}
+      {showGstField && (
+        <input
+          placeholder="GSTIN"
+          value={f.gstinOrGst}
+          onChange={(e) => setField("gstinOrGst", e.target.value.toUpperCase())}
+          className="input"
         />
+      )}
 
-        {showAddress && (
-          <div>
-            <label className="text-xs font-semibold text-gray-700">Address (optional)</label>
-            <textarea
-              value={f.address}
-              onChange={(e) => setField("address", e.target.value)}
-              placeholder="Full address"
-              className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200 min-h-[90px]"
-              disabled={submitting}
-            />
-          </div>
-        )}
+      <PincodeAutoFill
+        pincode={f.pincode}
+        setPincode={(v) => setField("pincode", v)}
+        city={f.city}
+        setCity={(v) => setField("city", v)}
+        district={f.district}
+        setDistrict={(v) => setField("district", v)}
+        state={f.state}
+        setState={(v) => setField("state", v)}
+      />
 
-        <div>
-          <label className="text-xs font-semibold text-gray-700">Password</label>
-          <input
-            value={f.password}
-            onChange={(e) => setField("password", e.target.value)}
-            placeholder="min 6 chars"
-            type="password"
-            className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-pink-200"
-            disabled={submitting}
-          />
-        </div>
+      {showAddress && (
+        <textarea
+          placeholder="Address"
+          value={f.address}
+          onChange={(e) => setField("address", e.target.value)}
+          className="input"
+        />
+      )}
 
-        {err ? <div className="text-sm font-semibold text-red-600">{err}</div> : null}
+      <input
+        type="password"
+        placeholder="Password"
+        value={f.password}
+        onChange={(e) => setField("password", e.target.value)}
+        className="input"
+      />
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className={[
-            "w-full md:w-auto px-6 py-2.5 rounded-2xl font-black text-white",
-            submitting ? "bg-gray-400" : "bg-gray-900 hover:opacity-95",
-          ].join(" ")}
-        >
-          {submitting ? "Saving..." : "Save"}
-        </button>
-      </form>
-    </>
+      <button
+        disabled={submitting}
+        className="btn-primary"
+      >
+        {submitting ? "Saving..." : "Create User"}
+      </button>
+
+      <style jsx>{`
+        .input {
+          width: 100%;
+          padding: 10px;
+          border: 1px solid #d1d5db;
+          border-radius: 10px;
+        }
+        .btn-primary {
+          background: black;
+          color: white;
+          padding: 10px;
+          border-radius: 10px;
+        }
+      `}</style>
+    </form>
   );
 }

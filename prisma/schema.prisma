@@ -149,6 +149,10 @@ model Order {
   @@index([idempotencyKey])
   @@index([retailerId])
   @@index([status])
+  @@index([distributorId, createdAt])
+  @@index([retailerId, createdAt])
+  @@index([distributorId, retailerId, createdAt])
+  @@index([distributorId, status, createdAt])
 }
 
 model OrderItem {

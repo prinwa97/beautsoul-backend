@@ -20,13 +20,19 @@ type SortKey = "RECENT" | "OLDEST" | "HIGH" | "LOW" | "NAME_AZ";
 export async function GET(req: Request) {
   try {
     const u: any = await getSessionUser();
-    if (!u) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!u) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
 
     const role = String(u.role || "").toUpperCase();
-    if (role !== "FIELD_OFFICER") return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    if (role !== "FIELD_OFFICER") {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
 
     const distributorId = u.distributorId ? String(u.distributorId) : null;
-    if (!distributorId) return NextResponse.json({ ok: false, error: "Missing distributorId in session" }, { status: 400 });
+    if (!distributorId) {
+      return NextResponse.json({ ok: false, error: "Missing distributorId in session" }, { status: 400 });
+    }
 
     const { searchParams } = new URL(req.url);
 
@@ -44,60 +50,78 @@ export async function GET(req: Request) {
       ];
     }
 
-    // Retailers (limit take, not pagination yet; fast enough for 100-200 in FO)
     const retailers = await prisma.retailer.findMany({
       where: whereRetailer,
-      select: { id: true, name: true, city: true, phone: true, createdAt: true },
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        phone: true,
+        createdAt: true,
+      },
       take,
       orderBy: { name: "asc" },
     });
 
     const ids = retailers.map((r) => r.id);
 
-    // balance = sum(DEBIT) - sum(CREDIT)  (can be negative)
-    const sums = ids.length
+    const grouped = ids.length
       ? await prisma.retailerLedger.groupBy({
           by: ["retailerId", "type"],
-          where: { distributorId, retailerId: { in: ids } },
+          where: {
+            distributorId,
+            retailerId: { in: ids },
+          },
           _sum: { amount: true },
         })
       : [];
 
-    const debit = new Map<string, number>();
-    const credit = new Map<string, number>();
+    const debitMap = new Map<string, number>();
+    const creditMap = new Map<string, number>();
 
-    for (const s of sums as any[]) {
-      const rid = String(s.retailerId);
-      const amt = Number(s._sum?.amount || 0);
-      if (s.type === "DEBIT") debit.set(rid, (debit.get(rid) || 0) + amt);
-      if (s.type === "CREDIT") credit.set(rid, (credit.get(rid) || 0) + amt);
+    for (const g of grouped as any[]) {
+      const retailerId = String(g.retailerId);
+      const amt = Number(g?._sum?.amount || 0);
+
+      if (g.type === "DEBIT") {
+        debitMap.set(retailerId, (debitMap.get(retailerId) || 0) + amt);
+      } else if (g.type === "CREDIT") {
+        creditMap.set(retailerId, (creditMap.get(retailerId) || 0) + amt);
+      }
     }
 
-    // last ledger date (for recent/oldest sorting)
     const lastDates = ids.length
       ? await prisma.retailerLedger.groupBy({
           by: ["retailerId"],
-          where: { distributorId, retailerId: { in: ids } },
+          where: {
+            distributorId,
+            retailerId: { in: ids },
+          },
           _max: { date: true },
         })
       : [];
 
     const lastMap = new Map<string, string>();
-    for (const r of lastDates as any[]) {
-      if (r?._max?.date) lastMap.set(String(r.retailerId), new Date(r._max.date).toISOString());
+    for (const row of lastDates as any[]) {
+      if (row?._max?.date) {
+        lastMap.set(String(row.retailerId), new Date(row._max.date).toISOString());
+      }
     }
 
     const rows = retailers.map((r) => {
-      const bal = (debit.get(r.id) || 0) - (credit.get(r.id) || 0); // + = collect, - = pay
-      const last = lastMap.get(r.id) || null;
+      const debit = debitMap.get(r.id) || 0;
+      const credit = creditMap.get(r.id) || 0;
+      const balance = debit - credit; // + = due, - = advance
+      const lastLedgerAt = lastMap.get(r.id) || null;
+
       return {
         retailerId: r.id,
         name: r.name,
         city: r.city,
         phone: r.phone,
-        balance: bal,
-        absBalance: Math.abs(bal),
-        lastLedgerAt: last,
+        balance,
+        absBalance: Math.abs(balance),
+        lastLedgerAt,
       };
     });
 
@@ -110,13 +134,20 @@ export async function GET(req: Request) {
       const bt = b.lastLedgerAt ? new Date(b.lastLedgerAt).getTime() : 0;
 
       if (sort === "OLDEST") return at - bt;
-      // RECENT default
       return bt - at;
     });
 
-    return NextResponse.json({ ok: true, rows, take, sort });
+    return NextResponse.json({
+      ok: true,
+      rows,
+      take,
+      sort,
+    });
   } catch (e: any) {
     console.error("FO collection retailers error:", e);
-    return NextResponse.json({ ok: false, error: e?.message || "Server error" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: e?.message || "Server error" },
+      { status: 500 }
+    );
   }
 }

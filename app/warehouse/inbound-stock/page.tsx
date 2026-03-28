@@ -61,6 +61,10 @@ function n(v: any) {
   return Number.isFinite(x) ? x : 0;
 }
 
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
 export default function StockInPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
@@ -80,7 +84,6 @@ export default function StockInPage() {
   const [q, setQ] = useState("");
   const [filterProduct, setFilterProduct] = useState("");
 
-  // Edit panel state
   const [editing, setEditing] = useState<{
     id: string;
     originalProductName: string;
@@ -279,12 +282,12 @@ export default function StockInPage() {
   }, [lots, q, filterProduct]);
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-3xl border bg-gradient-to-r from-slate-900 to-slate-800 p-5 text-white">
+    <div className="space-y-5 text-gray-900">
+      <div className="rounded-3xl border border-slate-800 bg-gradient-to-r from-slate-900 to-slate-800 p-5 text-white shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="text-2xl font-extrabold tracking-tight">Warehouse • Stock In</div>
-            <div className="mt-1 text-sm text-white/80">
+            <div className="mt-1 text-sm text-white/85">
               Production se aaya stock yahan add hoga — har entry me <b>new batch no</b>.
             </div>
           </div>
@@ -292,7 +295,8 @@ export default function StockInPage() {
           <div className="flex gap-2">
             <button
               onClick={loadLots}
-              className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/15"
+              type="button"
+              className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15 disabled:opacity-60"
             >
               {loadingLots ? "Refreshing..." : "Refresh List"}
             </button>
@@ -302,29 +306,30 @@ export default function StockInPage() {
 
       {msg && (
         <div
-          className={`rounded-2xl border p-3 text-sm ${
+          className={cx(
+            "rounded-2xl border p-3 text-sm font-medium",
             msg.type === "ok"
               ? "border-emerald-200 bg-emerald-50 text-emerald-900"
               : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
+          )}
         >
           {msg.text}
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
-        <div className="rounded-3xl border bg-white p-5 shadow-sm xl:col-span-2">
-          <div className="text-lg font-bold">Add New Batch</div>
-          <div className="mt-1 text-xs text-gray-500">
+        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm xl:col-span-2">
+          <div className="text-lg font-bold text-gray-900">Add New Batch</div>
+          <div className="mt-1 text-xs text-gray-600">
             Product select → Batch No → MFG/EXP → Qty → Save
           </div>
 
           {editing && (
-            <div className="mt-4 rounded-3xl border bg-slate-50 p-4">
+            <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="text-sm font-extrabold">Edit Lot</div>
-                  <div className="mt-1 text-xs text-gray-600">
+                  <div className="text-sm font-extrabold text-gray-900">Edit Lot</div>
+                  <div className="mt-1 text-xs text-gray-700">
                     Current: <b>{editing.originalProductName}</b> • Batch: <b>{editing.originalBatchNo}</b>
                   </div>
                 </div>
@@ -332,6 +337,7 @@ export default function StockInPage() {
                 <button
                   className="text-xs font-bold text-slate-700 underline"
                   onClick={closeEdit}
+                  type="button"
                 >
                   Cancel
                 </button>
@@ -339,9 +345,9 @@ export default function StockInPage() {
 
               <div className="mt-4 space-y-3">
                 <div>
-                  <label className="text-sm font-semibold">Product</label>
+                  <label className="text-sm font-semibold text-gray-800">Product</label>
                   <select
-                    className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm disabled:bg-gray-50"
+                    className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
                     value={editProductName}
                     onChange={(e) => setEditProductName(e.target.value)}
                     disabled={loadingProducts || updating}
@@ -358,9 +364,9 @@ export default function StockInPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-semibold">Batch No</label>
+                  <label className="text-sm font-semibold text-gray-800">Batch No</label>
                   <input
-                    className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                    className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
                     value={editBatchNo}
                     onChange={(e) => setEditBatchNo(e.target.value)}
                     placeholder="e.g. sc0003"
@@ -370,10 +376,10 @@ export default function StockInPage() {
 
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div>
-                    <label className="text-sm font-semibold">MFG Date</label>
+                    <label className="text-sm font-semibold text-gray-800">MFG Date</label>
                     <input
                       type="date"
-                      className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                      className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black"
                       value={editMfgDate}
                       onChange={(e) => setEditMfgDate(e.target.value)}
                       disabled={updating}
@@ -381,10 +387,10 @@ export default function StockInPage() {
                   </div>
 
                   <div>
-                    <label className="text-sm font-semibold">EXP Date</label>
+                    <label className="text-sm font-semibold text-gray-800">EXP Date</label>
                     <input
                       type="date"
-                      className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                      className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black"
                       value={editExpDate}
                       onChange={(e) => setEditExpDate(e.target.value)}
                       disabled={updating}
@@ -393,9 +399,9 @@ export default function StockInPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-semibold">Qty (pcs)</label>
+                  <label className="text-sm font-semibold text-gray-800">Qty (pcs)</label>
                   <input
-                    className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                    className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
                     value={editQty}
                     onChange={(e) => setEditQty(e.target.value.replace(/[^\d]/g, ""))}
                     placeholder="e.g. 10000"
@@ -407,6 +413,7 @@ export default function StockInPage() {
                 <button
                   onClick={applyEdit}
                   disabled={updating}
+                  type="button"
                   className="w-full rounded-2xl bg-slate-900 px-5 py-3 text-sm font-extrabold text-white hover:bg-slate-800 disabled:opacity-60"
                 >
                   {updating ? "Updating..." : "Update Lot"}
@@ -421,9 +428,9 @@ export default function StockInPage() {
 
           <div className="mt-4 space-y-3">
             <div>
-              <label className="text-sm font-semibold">Product</label>
+              <label className="text-sm font-semibold text-gray-800">Product</label>
               <select
-                className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm disabled:bg-gray-50"
+                className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
                 value={productName}
                 onChange={(e) => setProductName(e.target.value)}
                 disabled={loadingProducts || saving}
@@ -446,9 +453,9 @@ export default function StockInPage() {
             </div>
 
             <div>
-              <label className="text-sm font-semibold">Batch No (Unique)</label>
+              <label className="text-sm font-semibold text-gray-800">Batch No (Unique)</label>
               <input
-                className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
                 value={batchNo}
                 onChange={(e) => setBatchNo(e.target.value)}
                 placeholder="e.g. sc0003"
@@ -461,10 +468,10 @@ export default function StockInPage() {
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div>
-                <label className="text-sm font-semibold">MFG Date</label>
+                <label className="text-sm font-semibold text-gray-800">MFG Date</label>
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                  className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black"
                   value={mfgDate}
                   onChange={(e) => setMfgDate(e.target.value)}
                   disabled={saving}
@@ -472,10 +479,10 @@ export default function StockInPage() {
               </div>
 
               <div>
-                <label className="text-sm font-semibold">EXP Date</label>
+                <label className="text-sm font-semibold text-gray-800">EXP Date</label>
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                  className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black"
                   value={expDate}
                   onChange={(e) => setExpDate(e.target.value)}
                   disabled={saving}
@@ -484,9 +491,9 @@ export default function StockInPage() {
             </div>
 
             <div>
-              <label className="text-sm font-semibold">Qty received (pcs)</label>
+              <label className="text-sm font-semibold text-gray-800">Qty received (pcs)</label>
               <input
-                className="mt-1 w-full rounded-2xl border px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
                 value={qty}
                 onChange={(e) => setQty(e.target.value.replace(/[^\d]/g, ""))}
                 placeholder="e.g. 10000"
@@ -498,6 +505,7 @@ export default function StockInPage() {
             <button
               onClick={save}
               disabled={saving}
+              type="button"
               className="w-full rounded-2xl bg-slate-900 px-5 py-3 text-sm font-extrabold text-white hover:bg-slate-800 disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save Batch"}
@@ -505,18 +513,18 @@ export default function StockInPage() {
           </div>
         </div>
 
-        <div className="rounded-3xl border bg-white p-5 shadow-sm xl:col-span-3">
+        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm xl:col-span-3">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <div className="text-lg font-bold">Current Company Stock Lots</div>
-              <div className="mt-1 text-xs text-gray-500">
+              <div className="text-lg font-bold text-gray-900">Current Company Stock Lots</div>
+              <div className="mt-1 text-xs text-gray-600">
                 Total: <b>{lots.length}</b>
               </div>
             </div>
 
             <div className="flex flex-col gap-2 md:flex-row md:items-center">
               <select
-                className="rounded-2xl border px-3 py-2 text-sm"
+                className="rounded-2xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black"
                 value={filterProduct}
                 onChange={(e) => setFilterProduct(e.target.value)}
               >
@@ -529,7 +537,7 @@ export default function StockInPage() {
               </select>
 
               <input
-                className="w-full rounded-2xl border px-3 py-2 text-sm md:w-72"
+                className="w-full rounded-2xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black md:w-72"
                 placeholder="Search product / batch..."
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
@@ -537,7 +545,7 @@ export default function StockInPage() {
             </div>
           </div>
 
-          <div className="mt-4 overflow-x-auto rounded-2xl border">
+          <div className="mt-4 overflow-x-auto rounded-2xl border border-gray-200">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-gray-700">
                 <tr>
@@ -551,7 +559,7 @@ export default function StockInPage() {
                 </tr>
               </thead>
 
-              <tbody>
+              <tbody className="text-gray-900">
                 {loadingLots ? (
                   <tr>
                     <td className="px-3 py-4 text-gray-600" colSpan={7}>
@@ -566,23 +574,24 @@ export default function StockInPage() {
                   </tr>
                 ) : (
                   filteredLots.map((x) => (
-                    <tr key={x.id} className="border-t">
-                      <td className="px-3 py-3 font-semibold">{x.productName}</td>
+                    <tr key={x.id} className="border-t border-gray-100 hover:bg-slate-50">
+                      <td className="px-3 py-3 font-semibold text-gray-900">{x.productName}</td>
                       <td className="px-3 py-3">
                         <span className="inline-flex items-center rounded-xl bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-800">
                           {x.batchNo || "-"}
                         </span>
                       </td>
-                      <td className="px-3 py-3">{fmtDate(x.mfgDate)}</td>
-                      <td className="px-3 py-3">{fmtDate(x.expDate)}</td>
-                      <td className="px-3 py-3 text-right font-extrabold">
+                      <td className="px-3 py-3 text-gray-800">{fmtDate(x.mfgDate)}</td>
+                      <td className="px-3 py-3 text-gray-800">{fmtDate(x.expDate)}</td>
+                      <td className="px-3 py-3 text-right font-extrabold text-gray-900">
                         {n(x.qtyOnHandPcs).toLocaleString("en-IN")}
                       </td>
                       <td className="px-3 py-3 text-xs text-gray-600">{fmtDate(x.createdAt)}</td>
                       <td className="px-3 py-3 text-right">
                         <button
-                          className="rounded-xl border px-3 py-1.5 text-xs font-extrabold hover:bg-slate-50"
+                          className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-xs font-extrabold text-gray-800 hover:bg-slate-50"
                           onClick={() => openEdit(x)}
+                          type="button"
                           title="Edit this lot"
                         >
                           Edit

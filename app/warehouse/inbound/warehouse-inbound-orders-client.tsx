@@ -34,8 +34,7 @@ type InboundRow = {
   trackingNo?: string | null;
   trackingCarrier?: string | null;
 
-  dispatchDateTime?: string | null; // optional (if you use other name ignore)
- 
+  dispatchDateTime?: string | null;
 
   forDistributorId: string;
 
@@ -121,6 +120,7 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     cache: "no-store",
   });
+
   const data = (await res.json().catch(() => null)) as T | null;
   if (!res.ok) {
     const msg = (data as any)?.error || `HTTP ${res.status}`;
@@ -237,6 +237,7 @@ export default function WarehouseInboundOrdersClient() {
   async function load() {
     setLoading(true);
     setMsg("");
+
     try {
       const qs = new URLSearchParams();
       qs.set("take", String(take));
@@ -262,6 +263,7 @@ export default function WarehouseInboundOrdersClient() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return orders;
+
     return orders.filter((r) => {
       const dist = (r.distributor?.name || "").toLowerCase();
       const city = (r.distributor?.city || "").toLowerCase();
@@ -286,6 +288,7 @@ export default function WarehouseInboundOrdersClient() {
     setVerifyChecked(false);
     setVerifyOpen(true);
   }
+
   function closeVerifyPopup() {
     if (verifySaving) return;
     setVerifyOpen(false);
@@ -299,12 +302,14 @@ export default function WarehouseInboundOrdersClient() {
 
     setVerifySaving(true);
     setMsg("");
+
     try {
       const data = await fetchJSON<{ ok: boolean; error?: string }>(
         `/api/warehouse/inbound/${verifyOrder.id}/verify-payment`,
         { method: "POST" }
       );
       if (!data.ok) throw new Error(data.error || "Verify failed");
+
       closeVerifyPopup();
       await load();
     } catch (e: any) {
@@ -327,6 +332,7 @@ export default function WarehouseInboundOrdersClient() {
     try {
       const data = await fetchJSON<BatchesResp>(`/api/warehouse/inbound/${o.id}/batches`);
       if (!data.ok) throw new Error(data.error || "Failed to load batches");
+
       const batches = Array.isArray(data.batches) ? data.batches : [];
       setAllBatches(sortBatchesNearestExpiryFirst(batches));
 
@@ -374,11 +380,21 @@ export default function WarehouseInboundOrdersClient() {
 
       const b = allBatches.find((x) => x.id === batchId);
       if (!b) {
-        next[idx] = { ...row, batchId: "", batchNo: "", mfgDate: null, expiryDate: "", availableAtPick: 0 };
+        next[idx] = {
+          ...row,
+          batchId: "",
+          batchNo: "",
+          mfgDate: null,
+          expiryDate: "",
+          availableAtPick: 0,
+        };
         return next;
       }
 
-      const clamped = Math.min(Math.max(0, Number(row.allocQty || 0)), Math.max(0, Number(b.qty || 0)));
+      const clamped = Math.min(
+        Math.max(0, Number(row.allocQty || 0)),
+        Math.max(0, Number(b.qty || 0))
+      );
 
       next[idx] = {
         ...row,
@@ -462,6 +478,7 @@ export default function WarehouseInboundOrdersClient() {
 
     setProcessSaving(true);
     setMsg("");
+
     try {
       const payload = allocations
         .filter((a) => a.batchId && a.allocQty > 0)
@@ -514,12 +531,13 @@ export default function WarehouseInboundOrdersClient() {
     lrNo?: string;
     trackingNo?: string;
     trackingCarrier?: string;
-    dispatchDate?: string; // ISO
+    dispatchDate?: string;
   }) {
     if (!dispatchOrder) return;
 
     setDispatchSaving(true);
     setMsg("");
+
     try {
       const data = await fetchJSON<{ ok: boolean; error?: string }>(
         `/api/warehouse/inbound/${dispatchOrder.id}/dispatch`,
@@ -543,32 +561,41 @@ export default function WarehouseInboundOrdersClient() {
   const verifyTotals = useMemo(() => {
     const o = verifyOrder;
     if (!o) return { items: 0, qty: 0, computedAmount: 0 };
+
     const items = o.items?.length || 0;
     const qty = (o.items || []).reduce((a, it) => a + Number(it.orderedQtyPcs || 0), 0);
-    const computedAmount = (o.items || []).reduce((a, it) => a + calcLineAmount(it.orderedQtyPcs, it.rate), 0);
+    const computedAmount = (o.items || []).reduce(
+      (a, it) => a + calcLineAmount(it.orderedQtyPcs, it.rate),
+      0
+    );
+
     return { items, qty, computedAmount };
   }, [verifyOrder]);
 
   const processTotals = useMemo(() => {
     let totalQty = 0;
     let totalAmount = 0;
+
     for (const a of allocations) {
       if (!a.batchId) continue;
       totalQty += Number(a.allocQty || 0);
       totalAmount += calcLineAmount(a.allocQty, a.rate);
     }
+
     return { totalQty, totalAmount };
   }, [allocations]);
 
+  const isAnyModalOpen = verifyOpen || processOpen || dispatchOpen;
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#fff7f9] via-white to-[#fffaf6]">
+    <div className="min-h-screen bg-gradient-to-b from-[#fff7f9] via-white to-[#fffaf6] text-slate-900">
       {/* Sticky top bar */}
-      <div className="sticky top-0 z-30 border-b border-[#f6d7df] bg-white/80 backdrop-blur">
+      <div className="sticky top-0 z-30 border-b border-[#f6d7df] bg-white/90 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 py-3">
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-[220px]">
               <div className="text-lg font-bold text-slate-900">Warehouse Inbound</div>
-              <div className="text-xs text-slate-500">Verify → Process → Dispatch (only PACKED)</div>
+              <div className="text-xs text-slate-600">Verify → Process → Dispatch (only PACKED)</div>
             </div>
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -576,14 +603,14 @@ export default function WarehouseInboundOrdersClient() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search: order / distributor / UTR"
-                className="h-10 w-[260px] rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-[#f1a9b8] focus:ring-4 focus:ring-[#fde2e8]"
+                className="h-10 w-[260px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-[#f1a9b8] focus:ring-4 focus:ring-[#fde2e8]"
               />
 
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 disabled={loading}
-                className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-[#f1a9b8] focus:ring-4 focus:ring-[#fde2e8]"
+                className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#f1a9b8] focus:ring-4 focus:ring-[#fde2e8]"
               >
                 <option value="">All Status</option>
                 <option value="CREATED">CREATED</option>
@@ -599,6 +626,7 @@ export default function WarehouseInboundOrdersClient() {
               <button
                 onClick={load}
                 disabled={loading}
+                type="button"
                 className={cx(
                   "h-10 rounded-xl px-4 text-sm font-semibold shadow-sm ring-1 transition",
                   loading
@@ -613,7 +641,12 @@ export default function WarehouseInboundOrdersClient() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-6xl px-4 py-6">
+      <div
+        className={cx(
+          "mx-auto max-w-6xl px-4 py-6 transition-opacity duration-200",
+          isAnyModalOpen && "opacity-100"
+        )}
+      >
         {msg ? (
           <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {msg}
@@ -626,21 +659,23 @@ export default function WarehouseInboundOrdersClient() {
             <div className="text-xs font-semibold text-slate-500">Total Orders</div>
             <div className="mt-1 text-2xl font-bold text-slate-900">{summary.total}</div>
           </div>
+
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-xs font-semibold text-slate-500">Paid</div>
             <div className="mt-1 text-2xl font-bold text-slate-900">{summary.paid}</div>
           </div>
+
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-xs font-semibold text-slate-500">Verified</div>
             <div className="mt-1 text-2xl font-bold text-slate-900">{summary.verified}</div>
           </div>
+
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="text-xs font-semibold text-slate-500">Pending Verify</div>
             <div className="mt-1 text-2xl font-bold text-amber-700">{summary.pendingVerify}</div>
           </div>
         </div>
 
-        {/* ✅ Use your separate components (no duplicate UI) */}
         <OrdersTable
           rows={filtered as any}
           loading={loading}
@@ -673,52 +708,59 @@ export default function WarehouseInboundOrdersClient() {
       {/* ===================== Verify Popup ===================== */}
       {verifyOpen && verifyOrder ? (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto"
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/20 p-4 backdrop-blur-sm"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) closeVerifyPopup();
           }}
         >
-          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 mt-6">
+          <div className="mt-6 w-full max-w-2xl rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
             <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-slate-100 bg-white px-5 py-4">
               <div>
                 <div className="text-lg font-bold text-slate-900">Verify Payment</div>
-                <div className="text-xs text-slate-500">
+                <div className="text-xs text-slate-600">
                   Order: <span className="font-semibold text-slate-900">{verifyOrder.orderNo}</span> •{" "}
                   {verifyOrder.distributor?.name || "-"}
                 </div>
               </div>
+
               <button
-                className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
                 onClick={closeVerifyPopup}
                 disabled={verifySaving}
+                type="button"
               >
                 Close
               </button>
             </div>
 
             <div className="px-5 py-4">
-              <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm font-bold text-slate-900">Payment Details</div>
-                  <div className="text-xs text-slate-500">Confirm Paid Amount + UTR</div>
+                  <div className="text-xs text-slate-600">Confirm Paid Amount + UTR</div>
                 </div>
 
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <div className="rounded-xl bg-[#fffaf6] p-3 border border-[#f6d7df]">
+                  <div className="rounded-xl border border-[#f6d7df] bg-[#fffaf6] p-3">
                     <div className="text-xs font-semibold text-slate-500">Paid Amount</div>
-                    <div className="mt-1 text-base font-bold text-slate-900">₹{inr(verifyOrder.paidAmount)}</div>
+                    <div className="mt-1 text-base font-bold text-slate-900">
+                      ₹{inr(verifyOrder.paidAmount)}
+                    </div>
                   </div>
-                  <div className="rounded-xl bg-[#fffaf6] p-3 border border-[#f6d7df] md:col-span-2">
+
+                  <div className="rounded-xl border border-[#f6d7df] bg-[#fffaf6] p-3 md:col-span-2">
                     <div className="text-xs font-semibold text-slate-500">UTR No</div>
-                    <div className="mt-1 break-all text-sm font-semibold text-slate-900">{verifyOrder.utrNo || "-"}</div>
+                    <div className="mt-1 break-all text-sm font-semibold text-slate-900">
+                      {verifyOrder.utrNo || "-"}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+              <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div className="flex items-center justify-between bg-[#fff1f5] px-4 py-3">
                   <div className="text-sm font-bold text-slate-900">Order Items</div>
-                  <div className="text-xs text-slate-600">
+                  <div className="text-xs text-slate-700">
                     Items: <b>{verifyTotals.items}</b> • Qty: <b>{verifyTotals.qty}</b> • Calc Amount:{" "}
                     <b>₹{inr(verifyTotals.computedAmount)}</b>
                   </div>
@@ -734,18 +776,28 @@ export default function WarehouseInboundOrdersClient() {
                         <th className="px-4 py-3 text-right">Amount</th>
                       </tr>
                     </thead>
+
                     <tbody className="divide-y divide-slate-100">
                       {(verifyOrder.items || []).map((it) => {
                         const amt = calcLineAmount(it.orderedQtyPcs, it.rate);
                         return (
                           <tr key={it.id}>
-                            <td className="px-4 py-3 text-sm font-semibold text-slate-900">{it.productName}</td>
-                            <td className="px-4 py-3 text-right text-sm text-slate-700">{it.orderedQtyPcs}</td>
-                            <td className="px-4 py-3 text-right text-sm text-slate-700">₹{inr(Number(it.rate || 0))}</td>
-                            <td className="px-4 py-3 text-right text-sm font-bold text-slate-900">₹{inr(amt)}</td>
+                            <td className="px-4 py-3 text-sm font-semibold text-slate-900">
+                              {it.productName}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-slate-700">
+                              {it.orderedQtyPcs}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm text-slate-700">
+                              ₹{inr(Number(it.rate || 0))}
+                            </td>
+                            <td className="px-4 py-3 text-right text-sm font-bold text-slate-900">
+                              ₹{inr(amt)}
+                            </td>
                           </tr>
                         );
                       })}
+
                       {!verifyOrder.items || verifyOrder.items.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">
@@ -768,8 +820,12 @@ export default function WarehouseInboundOrdersClient() {
                     disabled={verifySaving}
                   />
                   <div>
-                    <div className="text-sm font-bold text-slate-900">I have verified this payment</div>
-                    <div className="text-xs text-slate-600">UTR aur amount confirm karke hi verify karein.</div>
+                    <div className="text-sm font-bold text-slate-900">
+                      I have verified this payment
+                    </div>
+                    <div className="text-xs text-slate-600">
+                      UTR aur amount confirm karke hi verify karein.
+                    </div>
                   </div>
                 </label>
               </div>
@@ -779,6 +835,7 @@ export default function WarehouseInboundOrdersClient() {
               <button
                 onClick={closeVerifyPopup}
                 disabled={verifySaving}
+                type="button"
                 className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
               >
                 Cancel
@@ -787,9 +844,12 @@ export default function WarehouseInboundOrdersClient() {
               <button
                 onClick={saveVerify}
                 disabled={!verifyChecked || verifySaving}
+                type="button"
                 className={cx(
                   "h-10 rounded-xl px-4 text-sm font-semibold text-white shadow-sm",
-                  !verifyChecked || verifySaving ? "cursor-not-allowed bg-slate-300" : "bg-[#e11d48] hover:bg-[#be123c]"
+                  !verifyChecked || verifySaving
+                    ? "cursor-not-allowed bg-slate-300"
+                    : "bg-[#e11d48] hover:bg-[#be123c]"
                 )}
               >
                 {verifySaving ? "Saving..." : "Save & Verify"}

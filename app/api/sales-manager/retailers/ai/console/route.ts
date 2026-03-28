@@ -933,8 +933,8 @@ async function runLevel4Engine(args: {
 
     const stockRows = await Stock.findMany({
       where: { ownerType: "RETAILER", ownerId: { in: engineRetailerIds } },
-      select: { ownerId: true, productName: true, qtyOnHandPcs: true, qty: true, quantity: true },
-      take: 50000,
+      select: { ownerId: true, productName: true, qtyOnHandPcs: true },
+      take: 5000,
     }).catch(async () => []);
 
     if (Array.isArray(stockRows)) {
