@@ -28,7 +28,7 @@ export default function AiCommandCenter({
     <div className="mt-6 p-4 rounded-2xl border bg-white">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="text-[11px] font-semibold text-gray-500">AI Command Center</div>
+          <div className="text-[11px] font-semibold text-gray-500">Command Center</div>
           <div className="text-lg font-black text-gray-900">Decide → Execute → Prove</div>
           <div className="text-xs text-gray-600 mt-1">Compact view · simple + clear.</div>
         </div>
@@ -42,7 +42,7 @@ export default function AiCommandCenter({
           </button>
 
           <button onClick={onRefreshAi} className="px-4 py-2 rounded-2xl border bg-white text-sm font-black hover:bg-gray-50">
-            ↻ Refresh AI
+            ↻ Refresh
           </button>
 
           <span className="text-[11px] px-2 py-0.5 rounded-full border bg-gray-50">
@@ -63,18 +63,7 @@ export default function AiCommandCenter({
         <KpiCard label="Open Tasks" value={openCount} />
         <KpiCard label="Progress" value={`${progressPct}%`} />
       </div>
-
-      <div className="mt-3">
-        <div className="h-2 rounded-full bg-gray-100 border overflow-hidden">
-          <div className="h-full bg-gray-900" style={{ width: `${progressPct}%` }} />
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {(ai?.performance?.reasons || []).slice(0, 8).map((x: string, i: number) => (
-            <Chip key={i}>{x}</Chip>
-          ))}
-        </div>
-      </div>
-
+      
       {!aiEnabled ? (
         <div className="mt-3 p-3 rounded-xl border bg-yellow-50 text-yellow-800 text-sm">
           AI disabled: <b>{ai?.reason || "UNKNOWN"}</b>

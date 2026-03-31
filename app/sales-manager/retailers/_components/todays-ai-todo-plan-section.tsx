@@ -28,6 +28,8 @@ export default function TodaysAiTodoPlanSection({
   loadAi: () => void;
   money: (n: any) => string;
 }) {
+
+  
   return (
     <div id="today-plan" className="mt-3 p-4 rounded-2xl border bg-white">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
