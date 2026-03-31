@@ -434,7 +434,7 @@ export default function DashboardClient() {
 
         {/* Top Defaulters clickable -> open ledger */}
         <Card>
-          <h3 className="font-semibold mb-3">Top Defaulters</h3>
+          <h3 className="font-semibold mb-3">Top Debtor</h3>
           <div className="space-y-2">
             {(data?.lists?.topDefaulters || []).length === 0 ? (
               <div className="text-sm text-gray-500">No defaulters found.</div>
