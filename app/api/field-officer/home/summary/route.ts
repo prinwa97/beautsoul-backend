@@ -118,9 +118,7 @@ export async function GET() {
       },
     });
 
-    const retailerMap = new Map(
-      orderRetailers.map((r) => [r.id, r])
-    );
+    const retailerMap = new Map(orderRetailers.map((r) => [r.id, r]));
 
     const ordersTop10 = orderGroups.map((g) => {
       const r = retailerMap.get(g.retailerId);
@@ -136,28 +134,45 @@ export async function GET() {
       };
     });
 
-    /* ---------------- PAYMENT INACTIVITY (TOP 10) ---------------- */
+    /* ---------------- PAYMENT INACTIVITY / PENDING PAYMENTS (TOP 10) ---------------- */
 
-    const ledgerGroups = await prisma.retailerLedger.groupBy({
-      by: ["retailerId"],
+    const ledgerGrouped = await prisma.retailerLedger.groupBy({
+      by: ["retailerId", "type"],
       where: { distributorId },
-      _sum: {
-        amount: true,
-      },
-      _max: {
-        date: true,
-      },
-      orderBy: {
-        _max: {
-          date: "asc",
-        },
-      },
-      take: 10,
+      _sum: { amount: true },
+      _max: { date: true },
     });
+
+    const debitMap = new Map<string, number>();
+    const creditMap = new Map<string, number>();
+    const lastPayMap = new Map<string, Date>();
+
+    for (const g of ledgerGrouped as any[]) {
+      const retailerId = String(g.retailerId);
+      const amt = Number(g?._sum?.amount || 0);
+
+      if (g.type === "DEBIT") {
+        debitMap.set(retailerId, (debitMap.get(retailerId) || 0) + amt);
+      } else if (g.type === "CREDIT") {
+        creditMap.set(retailerId, (creditMap.get(retailerId) || 0) + amt);
+      }
+
+      const dt = g?._max?.date ? new Date(g._max.date) : null;
+      if (dt) {
+        const prev = lastPayMap.get(retailerId);
+        if (!prev || dt > prev) {
+          lastPayMap.set(retailerId, dt);
+        }
+      }
+    }
+
+    const paymentRetailerIds = Array.from(
+      new Set([...debitMap.keys(), ...creditMap.keys()])
+    );
 
     const payRetailers = await prisma.retailer.findMany({
       where: {
-        id: { in: ledgerGroups.map((l) => l.retailerId) },
+        id: { in: paymentRetailerIds },
       },
       select: {
         id: true,
@@ -168,20 +183,32 @@ export async function GET() {
 
     const payMap = new Map(payRetailers.map((r) => [r.id, r]));
 
-    const paymentsTop10 = ledgerGroups.map((g) => {
-      const r = payMap.get(g.retailerId);
+    const paymentsTop10 = paymentRetailerIds
+      .map((retailerId) => {
+        const r = payMap.get(retailerId);
+        const debit = debitMap.get(retailerId) || 0;
+        const credit = creditMap.get(retailerId) || 0;
+        const pendingAmount = debit - credit;
 
-      const last = g._max.date;
-      const days = last ? daysBetween(now, last) : 99999;
+        const last = lastPayMap.get(retailerId) || null;
+        const days = last ? daysBetween(now, last) : 99999;
 
-      return {
-        retailerId: g.retailerId,
-        name: r?.name || "",
-        city: r?.city || null,
-        pendingAmount: Number(g._sum.amount || 0),
-        noPaymentDays: days,
-      };
-    });
+        return {
+          retailerId,
+          name: r?.name || "",
+          city: r?.city || null,
+          pendingAmount,
+          noPaymentDays: days,
+        };
+      })
+      .filter((x) => x.pendingAmount > 0)
+      .sort((a, b) => {
+        if (b.pendingAmount !== a.pendingAmount) {
+          return b.pendingAmount - a.pendingAmount;
+        }
+        return b.noPaymentDays - a.noPaymentDays;
+      })
+      .slice(0, 10);
 
     return NextResponse.json({
       ok: true,

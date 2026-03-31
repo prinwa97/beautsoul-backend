@@ -183,16 +183,34 @@ export async function POST(req: Request, ctx: { params: Promise<{ orderId: strin
       data: { totalAmount: total, status: "DISPATCHED" },
     });
 
-    await prisma.retailerLedger.create({
-      data: {
+    // Idempotency guard: avoid creating a second DEBIT when one already
+    // exists for this order/invoice. Some orders already insert a DEBIT at
+    // order creation time (FO order route). Prevent duplicate accounting
+    // rows by checking for an existing DEBIT with either the invoiceNo or
+    // the original orderNo as reference.
+    const existingDebit = await prisma.retailerLedger.findFirst({
+      where: {
         distributorId: order.distributorId,
         retailerId: order.retailerId,
         type: "DEBIT",
-        amount: total,
-        reference: txRes.invoiceNo,
-        narration: `Invoice generated for Order ${order.orderNo}`,
+        OR: [{ reference: txRes.invoiceNo }, { reference: order.orderNo }],
       },
     });
+
+    if (!existingDebit) {
+      await prisma.retailerLedger.create({
+        data: {
+          distributorId: order.distributorId,
+          retailerId: order.retailerId,
+          type: "DEBIT",
+          amount: total,
+          reference: txRes.invoiceNo,
+          narration: `Invoice generated for Order ${order.orderNo}`,
+        },
+      });
+    } else {
+      console.info(`Skipping duplicate DEBIT for order=${order.id} invoice=${txRes.invoiceNo} ledgerId=${existingDebit.id}`);
+    }
 
     // inventory summary update outside tx
     await Promise.all(

@@ -193,17 +193,10 @@ export async function POST(req: Request) {
         },
       });
 
-      await tx.retailerLedger.create({
-        data: {
-          retailerId: createdOrder.retailerId,
-          distributorId: createdOrder.distributorId,
-          type: "DEBIT",
-          amount: Math.floor(Number(createdOrder.totalAmount || 0)),
-          reference: createdOrder.orderNo || createdOrder.id,
-          narration: `Order ${createdOrder.orderNo || createdOrder.id}`,
-          date: createdOrder.createdAt || new Date(),
-        },
-      });
+      // DEBIT creation moved to invoice generation to avoid duplicate
+      // ledger rows (order create + invoice create). Invoice route
+      // contains an idempotency guard to ensure only one DEBIT per
+      // business source (order/invoice).
 
       return createdOrder;
     });
