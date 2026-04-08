@@ -149,10 +149,6 @@ model Order {
   @@index([idempotencyKey])
   @@index([retailerId])
   @@index([status])
-  @@index([distributorId, createdAt])
-  @@index([retailerId, createdAt])
-  @@index([distributorId, retailerId, createdAt])
-  @@index([distributorId, status, createdAt])
 }
 
 model OrderItem {
@@ -424,6 +420,7 @@ model StockLot {
   updatedAt    DateTime  @updatedAt
   productName  String
   mfgDate      DateTime?
+  receivedQty  Int?      @default(0)
 
   @@index([ownerType, ownerId, productName])
   @@index([expDate])
@@ -855,6 +852,12 @@ model SalesManagerDailyClose {
 
   @@unique([salesManagerId, day])
   @@index([salesManagerId, day])
+}
+
+model playing_with_neon {
+  id    Int    @id @default(autoincrement())
+  name  String
+  value Float? @db.Real
 }
 
 enum DistributorStatus {

@@ -3,8 +3,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import ProcessOrderModal from "./components/ProcessOrderModal";
 import DispatchDetailsModal from "./components/DispatchDetailsModal";
-import OrdersTable from "./components/OrdersTable";
-import OrdersMobile from "./components/OrdersMobile";
 
 /** ===================== Types ===================== */
 
@@ -93,7 +91,10 @@ function fmtDate(iso?: string | null) {
   if (!iso) return "-";
   try {
     const d = new Date(iso);
-    return d.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+    return d.toLocaleString("en-IN", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
   } catch {
     return iso;
   }
@@ -134,6 +135,17 @@ function calcLineAmount(qty: number, rate?: number | null) {
   return Math.round(Number(qty || 0) * r * 100) / 100;
 }
 
+function totalQty(items?: InboundItem[]) {
+  return (items || []).reduce((sum, it) => sum + Number(it.orderedQtyPcs || 0), 0);
+}
+
+function totalValue(items?: InboundItem[]) {
+  return (items || []).reduce(
+    (sum, it) => sum + calcLineAmount(it.orderedQtyPcs, it.rate),
+    0
+  );
+}
+
 function sortBatchesNearestExpiryFirst(b: InventoryBatch[]) {
   return [...b].sort((a, c) => {
     const da = new Date(a.expiryDate).getTime();
@@ -145,7 +157,6 @@ function sortBatchesNearestExpiryFirst(b: InventoryBatch[]) {
   });
 }
 
-/** Auto allocate by nearest expiry */
 function autoAllocateForOrderItems(orderItems: InboundItem[], batches: InventoryBatch[]) {
   const allocations: AllocationLine[] = [];
 
@@ -202,6 +213,307 @@ function autoAllocateForOrderItems(orderItems: InboundItem[], batches: Inventory
   return allocations;
 }
 
+function shippingSummary(row: InboundRow) {
+  if (row.shippingMode === "COURIER") {
+    return row.courierName ? `Courier • ${row.courierName}` : "Courier";
+  }
+  if (row.shippingMode === "TRANSPORT") {
+    return row.transportName ? `Transport • ${row.transportName}` : "Transport";
+  }
+  if (row.shippingMode === "SELF") return "Self";
+  return row.dispatchDate || row.dispatchDateTime ? "Dispatched" : "-";
+}
+
+function actionLabel(row: InboundRow) {
+  const status = String(row.status || "").toUpperCase();
+  if (row.paymentStatus === "PAID" && !row.paymentVerified) return "Verify";
+  if (row.paymentVerified && ["PAYMENT_VERIFIED", "CONFIRMED"].includes(status)) return "Process";
+  if (status === "PACKED") return "Dispatch";
+  return "Completed";
+}
+
+function actionTone(row: InboundRow) {
+  const label = actionLabel(row);
+  if (label === "Verify") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (label === "Process") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (label === "Dispatch") return "border-orange-200 bg-orange-50 text-orange-700";
+  return "border-emerald-200 bg-emerald-50 text-emerald-700";
+}
+
+function paymentTone(row: InboundRow) {
+  if (row.paymentStatus === "PAID" && row.paymentVerified) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (row.paymentStatus === "PAID") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  return "border-rose-200 bg-rose-50 text-rose-700";
+}
+
+/** ===================== Small UI ===================== */
+
+function StatCard({
+  title,
+  value,
+}: {
+  title: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-3xl border border-[#f1e5e9] bg-white px-5 py-4 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+        {title}
+      </div>
+      <div className="mt-2 text-3xl font-bold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  const pages: Array<number | string> = [];
+
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (page > 3) pages.push("...");
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
+      pages.push(i);
+    }
+    if (page < totalPages - 2) pages.push("...");
+    pages.push(totalPages);
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.max(1, page - 1))}
+        disabled={page === 1}
+        className="rounded-2xl border border-[#eddce1] bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Previous
+      </button>
+
+      {pages.map((p, idx) =>
+        typeof p === "string" ? (
+          <span key={`${p}-${idx}`} className="px-2 text-sm text-slate-400">
+            ...
+          </span>
+        ) : (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onPageChange(p)}
+            className={cx(
+              "h-11 min-w-[44px] rounded-2xl border px-3 text-sm font-semibold",
+              p === page
+                ? "border-[#e11d48] bg-[#e11d48] text-white"
+                : "border-[#eddce1] bg-white text-slate-700 hover:bg-slate-50"
+            )}
+          >
+            {p}
+          </button>
+        )
+      )}
+
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.min(totalPages, page + 1))}
+        disabled={page === totalPages}
+        className="rounded-2xl border border-[#eddce1] bg-white px-4 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Next
+      </button>
+    </div>
+  );
+}
+
+/** ===================== Detail Modal ===================== */
+
+function OrderDetailModal({
+  open,
+  order,
+  onClose,
+  onVerify,
+  onProcess,
+  onDispatch,
+}: {
+  open: boolean;
+  order: InboundRow | null;
+  onClose: () => void;
+  onVerify: (o: InboundRow) => void;
+  onProcess: (o: InboundRow) => void;
+  onDispatch: (o: InboundRow) => void;
+}) {
+  if (!open || !order) return null;
+
+  const label = actionLabel(order);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="max-h-[90vh] w-full max-w-4xl overflow-hidden rounded-[28px] border border-[#f1e5e9] bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-[#f4e8ec] px-6 py-5">
+          <div>
+            <div className="text-2xl font-bold text-slate-900">Order Details</div>
+            <div className="mt-1 text-sm text-slate-500">
+              {order.orderNo} • {order.distributor?.name || "-"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="max-h-[calc(90vh-88px)] overflow-y-auto px-6 py-5">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Order</div>
+              <div className="mt-1 text-sm font-bold text-slate-900">{order.orderNo}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Distributor</div>
+              <div className="mt-1 text-sm font-bold text-slate-900">{order.distributor?.name || "-"}</div>
+              <div className="mt-1 text-xs text-slate-500">
+                {[order.distributor?.city, order.distributor?.state].filter(Boolean).join(", ") || "-"}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Date</div>
+              <div className="mt-1 text-sm font-bold text-slate-900">{fmtDate(order.createdAt)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Dispatch</div>
+              <div className="mt-1 text-sm font-bold text-slate-900">
+                {fmtDate(order.dispatchDate || order.dispatchDateTime)}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</div>
+              <div className="mt-2 text-sm font-bold text-slate-900">{order.status || "-"}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment</div>
+              <div className="mt-2">
+                <span className={cx("inline-flex rounded-full border px-3 py-1 text-xs font-bold", paymentTone(order))}>
+                  {order.paymentStatus === "PAID"
+                    ? order.paymentVerified
+                      ? "PAID • VERIFIED"
+                      : "PAID • PENDING VERIFY"
+                    : "UNPAID"}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paid Amount</div>
+              <div className="mt-2 text-sm font-bold text-slate-900">₹{inr(order.paidAmount)}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">UTR</div>
+              <div className="mt-2 break-all text-sm font-bold text-slate-900">{order.utrNo || "-"}</div>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-[24px] border border-[#f1e5e9] bg-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#f5ecef] px-5 py-4">
+              <div className="text-base font-bold text-slate-900">Items</div>
+              <div className="text-sm text-slate-500">
+                Total Items: <b>{order.items?.length || 0}</b> • Qty: <b>{totalQty(order.items)}</b> • Value: <b>₹{inr(totalValue(order.items))}</b>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead>
+                  <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="px-5 py-3">Product</th>
+                    <th className="px-5 py-3 text-right">Qty</th>
+                    <th className="px-5 py-3 text-right">Rate</th>
+                    <th className="px-5 py-3 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(order.items || []).map((it) => {
+                    const amt = calcLineAmount(it.orderedQtyPcs, it.rate);
+                    return (
+                      <tr key={it.id}>
+                        <td className="px-5 py-3 text-sm font-medium text-slate-900">{it.productName}</td>
+                        <td className="px-5 py-3 text-right text-sm text-slate-700">{it.orderedQtyPcs}</td>
+                        <td className="px-5 py-3 text-right text-sm text-slate-700">₹{inr(Number(it.rate || 0))}</td>
+                        <td className="px-5 py-3 text-right text-sm font-bold text-slate-900">₹{inr(amt)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+            {label === "Verify" ? (
+              <button
+                type="button"
+                onClick={() => onVerify(order)}
+                className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-bold text-amber-700 hover:bg-amber-100"
+              >
+                Verify Payment
+              </button>
+            ) : label === "Process" ? (
+              <button
+                type="button"
+                onClick={() => onProcess(order)}
+                className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-bold text-blue-700 hover:bg-blue-100"
+              >
+                Process Order
+              </button>
+            ) : label === "Dispatch" ? (
+              <button
+                type="button"
+                onClick={() => onDispatch(order)}
+                className="rounded-2xl border border-orange-200 bg-orange-50 px-5 py-3 text-sm font-bold text-orange-700 hover:bg-orange-100"
+              >
+                Dispatch Order
+              </button>
+            ) : (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700">
+                Completed
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** ===================== Component ===================== */
 
 export default function WarehouseInboundOrdersClient() {
@@ -212,6 +524,11 @@ export default function WarehouseInboundOrdersClient() {
   const [take] = useState(200);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [q, setQ] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailOrder, setDetailOrder] = useState<InboundRow | null>(null);
 
   /** ---------- Verify popup state ---------- */
   const [verifyOpen, setVerifyOpen] = useState(false);
@@ -267,19 +584,41 @@ export default function WarehouseInboundOrdersClient() {
     return orders.filter((r) => {
       const dist = (r.distributor?.name || "").toLowerCase();
       const city = (r.distributor?.city || "").toLowerCase();
+      const state = (r.distributor?.state || "").toLowerCase();
       const orderNo = (r.orderNo || "").toLowerCase();
       const utr = (r.utrNo || "").toLowerCase();
-      return dist.includes(s) || city.includes(s) || orderNo.includes(s) || utr.includes(s);
+      return (
+        dist.includes(s) ||
+        city.includes(s) ||
+        state.includes(s) ||
+        orderNo.includes(s) ||
+        utr.includes(s)
+      );
     });
   }, [orders, q]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [q, statusFilter]);
+
   const summary = useMemo(() => {
-    const total = orders.length;
-    const paid = orders.filter((r) => r.paymentStatus === "PAID").length;
-    const verified = orders.filter((r) => r.paymentVerified).length;
-    const pendingVerify = orders.filter((r) => r.paymentStatus === "PAID" && !r.paymentVerified).length;
+    const total = filtered.length;
+    const paid = filtered.filter((r) => r.paymentStatus === "PAID").length;
+    const verified = filtered.filter((r) => r.paymentVerified).length;
+    const pendingVerify = filtered.filter((r) => r.paymentStatus === "PAID" && !r.paymentVerified).length;
     return { total, paid, verified, pendingVerify };
-  }, [orders]);
+  }, [filtered]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
 
   /** ===================== Verify Popup handlers ===================== */
 
@@ -311,6 +650,8 @@ export default function WarehouseInboundOrdersClient() {
       if (!data.ok) throw new Error(data.error || "Verify failed");
 
       closeVerifyPopup();
+      setDetailOpen(false);
+      setDetailOrder(null);
       await load();
     } catch (e: any) {
       setMsg(String(e?.message || e || "Error"));
@@ -502,6 +843,8 @@ export default function WarehouseInboundOrdersClient() {
       if (!data.ok) throw new Error(data.error || "Process failed");
 
       closeProcessPopup();
+      setDetailOpen(false);
+      setDetailOrder(null);
       await load();
       setMsg("✅ Packed done. Ab Dispatch button se dispatch karein.");
     } catch (e: any) {
@@ -549,6 +892,8 @@ export default function WarehouseInboundOrdersClient() {
       if (!data.ok) throw new Error(data.error || "Dispatch save failed");
 
       closeDispatchPopup();
+      setDetailOpen(false);
+      setDetailOrder(null);
       await load();
       setMsg("✅ Dispatch details saved. Status updated to DISPATCHED.");
     } catch (e: any) {
@@ -585,32 +930,67 @@ export default function WarehouseInboundOrdersClient() {
     return { totalQty, totalAmount };
   }, [allocations]);
 
-  const isAnyModalOpen = verifyOpen || processOpen || dispatchOpen;
+  const isAnyModalOpen = verifyOpen || processOpen || dispatchOpen || detailOpen;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#fff7f9] via-white to-[#fffaf6] text-slate-900">
-      {/* Sticky top bar */}
-      <div className="sticky top-0 z-30 border-b border-[#f6d7df] bg-white/90 backdrop-blur">
-        <div className="mx-auto max-w-6xl px-4 py-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="min-w-[220px]">
-              <div className="text-lg font-bold text-slate-900">Warehouse Inbound</div>
-              <div className="text-xs text-slate-600">Verify → Process → Dispatch (only PACKED)</div>
+    <div className="min-h-screen bg-[#faf6f7] text-slate-900">
+      <div
+        className={cx(
+          "mx-auto max-w-7xl px-4 py-6 md:px-6",
+          isAnyModalOpen && "select-none"
+        )}
+      >
+        {/* Top Header */}
+        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="text-[25px] font-bold leading-none text-slate-900">
+              Orders
+            </div>
+            <div className="mt-2 text-sm text-slate-500">
+              Warehouse inbound pending orders
+            </div>
+          </div>
+        </div>
+
+        {msg ? (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {msg}
+          </div>
+        ) : null}
+
+        {/* KPI */}
+        <div className="mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <StatCard title="Total Orders" value={summary.total} />
+          <StatCard title="Paid" value={summary.paid} />
+          <StatCard title="Verified" value={summary.verified} />
+          <StatCard title="Pending Verify" value={summary.pendingVerify} />
+        </div>
+
+        {/* Table Section */}
+        <div className="overflow-hidden rounded-[28px] border border-[#eee1e6] bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-[#f3e9ed] px-5 py-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="text-[25px] font-bold leading-none text-slate-900">
+                Order Summary
+              </div>
+              <div className="mt-2 text-sm text-slate-500">
+                Overview of pending inbound orders.
+              </div>
             </div>
 
-            <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search: order / distributor / UTR"
-                className="h-10 w-[260px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-[#f1a9b8] focus:ring-4 focus:ring-[#fde2e8]"
+                placeholder="Search..."
+               className="h-10 w-[200px] rounded-xl border border-[#ecdbe1] bg-white px-3 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-[#e7b9c7] focus:ring-2 focus:ring-[#fde8ee]"
               />
 
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 disabled={loading}
-                className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#f1a9b8] focus:ring-4 focus:ring-[#fde2e8]"
+                className="h-12 rounded-2xl border border-[#ecdbe1] bg-white px-4 text-sm text-slate-700 outline-none focus:border-[#e7b9c7] focus:ring-4 focus:ring-[#fde8ee]"
               >
                 <option value="">All Status</option>
                 <option value="CREATED">CREATED</option>
@@ -628,82 +1008,234 @@ export default function WarehouseInboundOrdersClient() {
                 disabled={loading}
                 type="button"
                 className={cx(
-                  "h-10 rounded-xl px-4 text-sm font-semibold shadow-sm ring-1 transition",
+                  "h-12 rounded-2xl px-5 text-sm font-bold",
                   loading
-                    ? "cursor-not-allowed bg-slate-100 text-slate-500 ring-slate-200"
-                    : "bg-slate-900 text-white ring-slate-900/10 hover:bg-slate-800"
+                    ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                    : "bg-[#e11d48] text-white hover:bg-[#be123c]"
                 )}
               >
                 {loading ? "Refreshing..." : "Refresh"}
               </button>
             </div>
           </div>
+
+          {/* Desktop Table */}
+          <div className="hidden md:block">
+            <div className="grid grid-cols-[1.3fr_1.2fr_1fr_0.7fr_1fr_0.8fr] gap-4 border-b border-[#f4eaee] bg-[#fcf7f9] px-5 py-4 text-sm font-semibold text-slate-600">
+              <div>Order No</div>
+              <div>Distributor</div>
+              <div>Dispatch</div>
+              <div>Item Qty</div>
+              <div>Date</div>
+              <div className="text-right">Action</div>
+            </div>
+
+            {loading ? (
+              <div className="px-5 py-10 text-center text-sm text-slate-500">Loading orders...</div>
+            ) : pageRows.length === 0 ? (
+              <div className="px-5 py-10 text-center text-sm text-slate-500">No orders found</div>
+            ) : (
+              <div className="divide-y divide-[#f5ecef]">
+                {pageRows.map((row) => {
+                  const label = actionLabel(row);
+
+                  return (
+                    <div
+                      key={row.id}
+                      className="grid cursor-pointer grid-cols-[1.3fr_1.2fr_1fr_0.7fr_1fr_0.8fr] items-center gap-4 px-5 py-3 hover:bg-[#fffafc]"
+                      onClick={() => {
+                        setDetailOrder(row);
+                        setDetailOpen(true);
+                      }}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-bold text-slate-900">{row.orderNo}</div>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-slate-800">
+                          {row.distributor?.name || "-"}
+                        </div>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="truncate text-sm text-slate-700">
+                          {shippingSummary(row)}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm font-semibold text-slate-800">{totalQty(row.items)}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm text-slate-700">{fmtDateOnly(row.createdAt)}</div>
+                      </div>
+
+                      <div
+                        className="flex justify-end"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (label === "Verify") return openVerifyPopup(row);
+                            if (label === "Process") return openProcessPopup(row);
+                            if (label === "Dispatch") return openDispatchPopup(row);
+                            setDetailOrder(row);
+                            setDetailOpen(true);
+                          }}
+                          className={cx(
+                            "rounded-2xl border px-4 py-2 text-xs font-bold",
+                            actionTone(row)
+                          )}
+                        >
+                          {label}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Mobile Cards */}
+          <div className="grid gap-3 p-4 md:hidden">
+            {loading ? (
+              <div className="rounded-3xl border border-[#f1e5e9] bg-white px-4 py-8 text-center text-sm text-slate-500">
+                Loading orders...
+              </div>
+            ) : pageRows.length === 0 ? (
+              <div className="rounded-3xl border border-[#f1e5e9] bg-white px-4 py-8 text-center text-sm text-slate-500">
+                No orders found
+              </div>
+            ) : (
+              pageRows.map((row) => {
+                const label = actionLabel(row);
+
+                return (
+                  <div
+                    key={row.id}
+                    className="rounded-[24px] border border-[#f1e5e9] bg-white p-4"
+                    onClick={() => {
+                      setDetailOrder(row);
+                      setDetailOpen(true);
+                    }}
+                  >
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Order
+                        </div>
+                        <div className="mt-1 text-sm font-bold text-slate-900">{row.orderNo}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Distributor
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">
+                          {row.distributor?.name || "-"}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Dispatch
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">{shippingSummary(row)}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Item Qty
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">{totalQty(row.items)}</div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Date
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700">{fmtDateOnly(row.createdAt)}</div>
+                      </div>
+
+                      <div
+                        className="flex items-end justify-start"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (label === "Verify") return openVerifyPopup(row);
+                            if (label === "Process") return openProcessPopup(row);
+                            if (label === "Dispatch") return openDispatchPopup(row);
+                            setDetailOrder(row);
+                            setDetailOpen(true);
+                          }}
+                          className={cx(
+                            "rounded-2xl border px-4 py-2 text-xs font-bold",
+                            actionTone(row)
+                          )}
+                        >
+                          {label}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer / Pagination */}
+          <div className="flex flex-col gap-4 border-t border-[#f4eaee] px-5 py-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-600">Items per page</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value || 10));
+                  setPage(1);
+                }}
+                className="h-12 rounded-2xl border border-[#ecdbe1] bg-white px-4 text-sm text-slate-700 outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={30}>30</option>
+              </select>
+            </div>
+
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+          </div>
         </div>
       </div>
 
-      <div
-        className={cx(
-          "mx-auto max-w-6xl px-4 py-6 transition-opacity duration-200",
-          isAnyModalOpen && "opacity-100"
-        )}
-      >
-        {msg ? (
-          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            {msg}
-          </div>
-        ) : null}
-
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold text-slate-500">Total Orders</div>
-            <div className="mt-1 text-2xl font-bold text-slate-900">{summary.total}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold text-slate-500">Paid</div>
-            <div className="mt-1 text-2xl font-bold text-slate-900">{summary.paid}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold text-slate-500">Verified</div>
-            <div className="mt-1 text-2xl font-bold text-slate-900">{summary.verified}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-semibold text-slate-500">Pending Verify</div>
-            <div className="mt-1 text-2xl font-bold text-amber-700">{summary.pendingVerify}</div>
-          </div>
-        </div>
-
-        <OrdersTable
-          rows={filtered as any}
-          loading={loading}
-          onVerify={openVerifyPopup as any}
-          onProcess={openProcessPopup as any}
-          onDispatch={(id) => {
-            const found = orders.find((x) => x.id === id) || null;
-            if (found) openDispatchPopup(found);
-          }}
-          cx={cx}
-          fmtDate={fmtDate}
-          inr={inr}
-        />
-
-        <OrdersMobile
-          rows={filtered as any}
-          loading={loading}
-          onVerify={openVerifyPopup as any}
-          onProcess={openProcessPopup as any}
-          onDispatch={(id) => {
-            const found = orders.find((x) => x.id === id) || null;
-            if (found) openDispatchPopup(found);
-          }}
-          cx={cx}
-          fmtDate={fmtDate}
-          inr={inr}
-        />
-      </div>
+      {/* ===================== Order Detail Popup ===================== */}
+      <OrderDetailModal
+        open={detailOpen}
+        order={detailOrder}
+        onClose={() => {
+          setDetailOpen(false);
+          setDetailOrder(null);
+        }}
+        onVerify={(o) => {
+          setDetailOpen(false);
+          setDetailOrder(null);
+          openVerifyPopup(o);
+        }}
+        onProcess={(o) => {
+          setDetailOpen(false);
+          setDetailOrder(null);
+          openProcessPopup(o);
+        }}
+        onDispatch={(o) => {
+          setDetailOpen(false);
+          setDetailOrder(null);
+          openDispatchPopup(o);
+        }}
+      />
 
       {/* ===================== Verify Popup ===================== */}
       {verifyOpen && verifyOrder ? (

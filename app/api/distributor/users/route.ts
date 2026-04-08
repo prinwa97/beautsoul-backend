@@ -20,26 +20,27 @@ export async function GET() {
       );
     }
 
-    // ✅ Retailers are in Retailer table (linked to User via userId)
+    // Retailers are in Retailer table
     const retailers = await prisma.retailer.findMany({
       where: { distributorId },
       orderBy: { createdAt: "desc" },
       select: {
-        id: true,          // ✅ Retailer.id (cuid)
-        userId: true,      // ✅ User.id (cuid)
+        id: true,
+        userId: true,
         name: true,
         phone: true,
         gst: true,
         status: true,
         address: true,
         city: true,
+        district: true,
         state: true,
         pincode: true,
         createdAt: true,
       },
     });
 
-    // ✅ Field Officers are Users with role FIELD_OFFICER
+    // Field Officers are Users with role FIELD_OFFICER
     const fieldOfficers = await prisma.user.findMany({
       where: {
         role: "FIELD_OFFICER",
@@ -47,30 +48,31 @@ export async function GET() {
       },
       orderBy: { createdAt: "desc" },
       select: {
-        id: true, // User.id (cuid)
+        id: true,
         name: true,
         code: true,
         phone: true,
         status: true,
         address: true,
         city: true,
+        district: true,
         state: true,
         pincode: true,
         createdAt: true,
       },
     });
 
-    // ✅ Normalize payload for UI (very important)
     const retailersForUI = retailers.map((r) => ({
       type: "RETAILER",
-      retailerId: r.id,   // ✅ use this for PATCH URL preferably
-      userId: r.userId,   // ✅ backup id
+      retailerId: r.id,
+      userId: r.userId,
       name: r.name,
       phone: r.phone,
       gst: r.gst,
       status: r.status,
       address: r.address,
       city: r.city,
+      district: r.district,
       state: r.state,
       pincode: r.pincode,
       createdAt: r.createdAt,
@@ -85,6 +87,7 @@ export async function GET() {
       status: u.status,
       address: u.address,
       city: u.city,
+      district: u.district,
       state: u.state,
       pincode: u.pincode,
       createdAt: u.createdAt,

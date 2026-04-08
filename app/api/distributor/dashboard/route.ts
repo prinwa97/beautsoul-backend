@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireDistributorId } from "@/lib/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+type Period = "today" | "week" | "month" | "year";
 
 function startOfToday() {
   const d = new Date();
@@ -27,48 +29,63 @@ function startOfMonth() {
   return x;
 }
 
+function startOfYear() {
+  const d = new Date();
+  const x = new Date(d.getFullYear(), 0, 1);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
 function money(n: number) {
   return Math.round(n || 0);
 }
 
-export async function GET() {
+function getPeriodStart(period: Period) {
+  switch (period) {
+    case "today":
+      return startOfToday();
+    case "week":
+      return startOfWeek();
+    case "month":
+      return startOfMonth();
+    case "year":
+      return startOfYear();
+    default:
+      return startOfToday();
+  }
+}
+
+export async function GET(req: NextRequest) {
   try {
     const distributorId = await requireDistributorId();
 
-    const distributor = await prisma.distributor.findUnique({
-      where: { id: distributorId },
-      select: { id: true, name: true, code: true, status: true },
-    });
+    const rawPeriod = req.nextUrl.searchParams.get("period");
+    const period: Period =
+      rawPeriod === "today" ||
+      rawPeriod === "week" ||
+      rawPeriod === "month" ||
+      rawPeriod === "year"
+        ? rawPeriod
+        : "today";
 
     const now = new Date();
-    const todayFrom = startOfToday();
-    const weekFrom = startOfWeek();
-    const monthFrom = startOfMonth();
-    const last30From = new Date(Date.now() - 29 * 86400000);
+    const periodFrom = getPeriodStart(period);
 
-    // 1) Retailers count
-    const [retailersCount, activeRetailersCount] = await Promise.all([
-      prisma.retailer.count({ where: { distributorId } }),
-      prisma.retailer.count({ where: { distributorId, status: "ACTIVE" } }),
-    ]);
-
-    // 2) Field officers count
-    const fieldOfficersCount = await prisma.user.count({
-      where: { distributorId, role: "FIELD_OFFICER", status: "ACTIVE" },
-    });
-
-    // 3) Stock summary
-    const invRows = await prisma.inventory.findMany({
-      where: { distributorId },
-      select: { qty: true },
-    });
-
-    const stockSkus = invRows.length;
-    const stockTotalQty = invRows.reduce((a, b) => a + (b.qty || 0), 0);
+    const [retailersCount, activeRetailersCount, fieldOfficersCount] =
+      await Promise.all([
+        prisma.retailer.count({ where: { distributorId } }),
+        prisma.retailer.count({ where: { distributorId, status: "ACTIVE" } }),
+        prisma.user.count({
+          where: { distributorId, role: "FIELD_OFFICER", status: "ACTIVE" },
+        }),
+      ]);
 
     async function ledgerTotals(from: Date, to: Date) {
       const rows = await prisma.retailerLedger.findMany({
-        where: { distributorId, date: { gte: from, lte: to } },
+        where: {
+          distributorId,
+          date: { gte: from, lte: to },
+        },
         select: { type: true, amount: true },
       });
 
@@ -87,33 +104,30 @@ export async function GET() {
       };
     }
 
-    const [today, week, month] = await Promise.all([
-      ledgerTotals(todayFrom, now),
-      ledgerTotals(weekFrom, now),
-      ledgerTotals(monthFrom, now),
-    ]);
+    const totals = await ledgerTotals(periodFrom, now);
 
-    const allLedger = await prisma.retailerLedger.findMany({
+    const totalAgg = await prisma.retailerLedger.groupBy({
+      by: ["type"],
       where: { distributorId },
-      select: { type: true, amount: true },
+      _sum: { amount: true },
     });
 
-    let allSales = 0;
-    let allReceived = 0;
+    let totalSalesAll = 0;
+    let totalReceivedAll = 0;
 
-    for (const r of allLedger) {
-      if (r.type === "DEBIT") allSales += r.amount;
-      else allReceived += r.amount;
+    for (const r of totalAgg) {
+      if (r.type === "DEBIT") totalSalesAll += r._sum.amount || 0;
+      else totalReceivedAll += r._sum.amount || 0;
     }
 
-    const totalPending = money(allSales - allReceived);
+    const totalPending = money(totalSalesAll - totalReceivedAll);
 
-    // ✅ 4) Top 5 Products (InvoiceItem based) - SAFE VERSION
     const invoiceIdsRows = await prisma.invoice.findMany({
-      where: { distributorId },
+      where: {
+        distributorId,
+        createdAt: { gte: periodFrom, lte: now },
+      },
       select: { id: true },
-      // optional: last 30 days
-      // where: { distributorId, createdAt: { gte: last30From, lte: now } },
     });
 
     const invoiceIds = invoiceIdsRows.map((x) => x.id);
@@ -135,37 +149,49 @@ export async function GET() {
       amount: money(Number(g._sum.amount || 0)),
     }));
 
-    // Top retailers (last 30 days) (ledger based)
-    const last30 = await prisma.retailerLedger.findMany({
-      where: { distributorId, date: { gte: last30From, lte: now } },
-      select: { retailerId: true, type: true, amount: true },
+    const periodLedger = await prisma.retailerLedger.findMany({
+      where: {
+        distributorId,
+        date: { gte: periodFrom, lte: now },
+      },
+      select: {
+        retailerId: true,
+        type: true,
+        amount: true,
+      },
     });
 
-    const agg = new Map<string, { sales: number; received: number }>();
+    const agg = new Map<string, { sales: number; received: number; hasDebit: boolean }>();
 
-    for (const r of last30) {
-      const cur = agg.get(r.retailerId) || { sales: 0, received: 0 };
-      if (r.type === "DEBIT") cur.sales += r.amount;
-      else cur.received += r.amount;
+    for (const r of periodLedger) {
+      const cur = agg.get(r.retailerId) || {
+        sales: 0,
+        received: 0,
+        hasDebit: false,
+      };
+
+      if (r.type === "DEBIT") {
+        cur.sales += r.amount;
+        cur.hasDebit = true;
+      } else {
+        cur.received += r.amount;
+      }
+
       agg.set(r.retailerId, cur);
     }
 
-    const retailerIds = [...agg.keys()];
-
-    const retailerMeta = retailerIds.length
-      ? await prisma.retailer.findMany({
-          where: { id: { in: retailerIds } },
-          select: { id: true, name: true, city: true },
-        })
-      : [];
+    const retailerMeta = await prisma.retailer.findMany({
+      where: { distributorId },
+      select: { id: true, name: true, city: true, status: true },
+    });
 
     const nameMap = new Map(retailerMeta.map((r) => [r.id, r]));
 
-    const topRetailers = retailerIds
-      .map((id) => {
-        const v = agg.get(id)!;
+    // IMPORTANT FIX:
+    // no slice here, so dashboard donut can build Top 6 + Others correctly
+    const topRetailers = [...agg.entries()]
+      .map(([id, v]) => {
         const meta = nameMap.get(id);
-
         return {
           retailerId: id,
           name: meta?.name || "Retailer",
@@ -175,33 +201,25 @@ export async function GET() {
           pending: money(v.sales - v.received),
         };
       })
-      .sort((a, b) => b.sales - a.sales)
-      .slice(0, 10);
+      .sort((a, b) => b.sales - a.sales);
 
-    const topDefaulters = [...topRetailers]
+    const topDefaulters = [...agg.entries()]
+      .map(([id, v]) => {
+        const meta = nameMap.get(id);
+        return {
+          retailerId: id,
+          name: meta?.name || "Retailer",
+          city: meta?.city || "",
+          sales: money(v.sales),
+          received: money(v.received),
+          pending: money(v.sales - v.received),
+        };
+      })
       .sort((a, b) => b.pending - a.pending)
-      .slice(0, 10);
+      .slice(0, 5);
 
-    const last30Debit = new Set(
-      (
-        await prisma.retailerLedger.findMany({
-          where: {
-            distributorId,
-            date: { gte: last30From, lte: now },
-            type: "DEBIT",
-          },
-          select: { retailerId: true },
-        })
-      ).map((x) => x.retailerId)
-    );
-
-    const allRetailers = await prisma.retailer.findMany({
-      where: { distributorId },
-      select: { id: true, name: true, city: true, status: true },
-    });
-
-    const nonPerformingRetailers = allRetailers
-      .filter((r) => !last30Debit.has(r.id))
+    const nonPerformingRetailers = retailerMeta
+      .filter((r) => !agg.get(r.id)?.hasDebit)
       .slice(0, 20)
       .map((r) => ({
         retailerId: r.id,
@@ -211,22 +229,18 @@ export async function GET() {
       }));
 
     return NextResponse.json({
-      ok: true, // ✅ IMPORTANT
+      ok: true,
       distributorId,
-      distributor,
+      period,
       counts: {
         retailers: retailersCount,
         activeRetailers: activeRetailersCount,
         fieldOfficers: fieldOfficersCount,
       },
-      stock: {
-        skus: stockSkus,
-        totalQty: stockTotalQty,
-      },
       totals: {
-        today,
-        week,
-        month,
+        sales: totals.sales,
+        received: totals.received,
+        pending: totals.pending,
         totalPending,
       },
       lists: {

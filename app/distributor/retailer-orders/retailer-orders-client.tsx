@@ -59,22 +59,25 @@ function inr(n: number) {
   const x = Number(n || 0);
   return x.toLocaleString("en-IN");
 }
+
 function fmtDate(s?: string | null) {
   if (!s) return "-";
   const d = new Date(s);
   return isNaN(+d) ? "-" : d.toLocaleDateString("en-IN");
 }
+
 function ymd(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
+
 function keyOf(s: string) {
   return String(s || "").trim().toLowerCase();
 }
 
-// ✅ invoice generate ho gaya => processed
+// invoice generate ho gaya => processed
 function isProcessed(o: OrderRow) {
   return Boolean(o?.invoice?.id || o?.invoice?.invoiceNo || o?.billed);
 }
@@ -82,33 +85,27 @@ function isProcessed(o: OrderRow) {
 export default function RetailerOrdersClient() {
   const router = useRouter();
 
-  // Retailers
   const [retailers, setRetailers] = useState<Retailer[]>([]);
   const [loadingRetailers, setLoadingRetailers] = useState(false);
   const [retailerId, setRetailerId] = useState("");
 
-  // Search retailers
   const [retailerSearch, setRetailerSearch] = useState("");
 
-  // Orders
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
 
-  // Range filters
   const [range, setRange] = useState<"today" | "week" | "month" | "all" | "custom">("month");
   const [from, setFrom] = useState<string>(() => ymd(new Date()));
   const [to, setTo] = useState<string>(() => ymd(new Date()));
 
-  // UI
   const [error, setError] = useState("");
 
-  // ---- Process Modal ----
   const [processOpen, setProcessOpen] = useState(false);
   const [processOrder, setProcessOrder] = useState<OrderRow | null>(null);
 
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [batches, setBatches] = useState<BatchRow[]>([]);
-  const [batchPick, setBatchPick] = useState<Record<string, string>>({}); // key(product) -> batchNo
+  const [batchPick, setBatchPick] = useState<Record<string, string>>({});
 
   const [processing, setProcessing] = useState(false);
   const [processMsg, setProcessMsg] = useState<string>("");
@@ -176,6 +173,16 @@ export default function RetailerOrdersClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, retailerId, from, to]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && processOpen) {
+        closeProcess();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [processOpen]);
+
   const filteredRetailers = useMemo(() => {
     const q = retailerSearch.trim().toLowerCase();
     const rank = (s?: string) => (s === "ACTIVE" ? 0 : s === "PENDING" ? 1 : 2);
@@ -198,11 +205,7 @@ export default function RetailerOrdersClient() {
     setProcessMsg("");
     try {
       const uniq = Array.from(
-        new Set(
-          (productNames || [])
-            .map((x) => String(x || "").trim())
-            .filter(Boolean)
-        )
+        new Set((productNames || []).map((x) => String(x || "").trim()).filter(Boolean))
       );
 
       if (!uniq.length) {
@@ -212,7 +215,8 @@ export default function RetailerOrdersClient() {
 
       const results = await Promise.all(
         uniq.map(async (pn) => {
-          const url = "/api/distributor/stock/batches?take=200&productName=" + encodeURIComponent(pn);
+          const url =
+            "/api/distributor/stock/batches?take=200&productName=" + encodeURIComponent(pn);
 
           const res = await fetch(url, { cache: "no-store" });
           const data = await res.json().catch(() => null);
@@ -258,7 +262,6 @@ export default function RetailerOrdersClient() {
   }
 
   function openProcess(o: OrderRow) {
-    // ✅ already processed to modal open nahi hoga
     if (isProcessed(o)) return;
 
     setProcessOrder(o);
@@ -353,13 +356,13 @@ export default function RetailerOrdersClient() {
         return;
       }
 
-      // ✅ invoice info nikal lo
       const invoiceId = String(data?.invoiceId || data?.invoice?.id || "");
       const invoiceNo = String(data?.invoiceNo || data?.invoice?.invoiceNo || "");
-      const totalAmount = Number(data?.totalAmount || data?.invoice?.totalAmount || processOrder.totalAmount || 0);
+      const totalAmount = Number(
+        data?.totalAmount || data?.invoice?.totalAmount || processOrder.totalAmount || 0
+      );
       const createdAt = String(data?.createdAt || data?.invoice?.createdAt || new Date().toISOString());
 
-      // ✅ instantly UI update so "Process" button disable immediately
       setOrders((prev) =>
         prev.map((x) =>
           x.id === processOrder.id
@@ -378,11 +381,8 @@ export default function RetailerOrdersClient() {
       );
 
       closeProcess();
-
-      // ✅ also refresh from server (keep data consistent)
       await loadOrders();
 
-      // ✅ OPEN PDF DIRECTLY after invoice generated
       if (invoiceId && invoiceId !== "undefined" && invoiceId !== "null") {
         window.open(
           `/api/distributor/retailer-orders/invoices/${encodeURIComponent(invoiceId)}/pdf`,
@@ -402,7 +402,6 @@ export default function RetailerOrdersClient() {
   return (
     <div className="min-h-screen bg-[#fff7f6] p-4 md:p-6">
       <div className="max-w-6xl mx-auto space-y-4">
-        {/* Header */}
         <div className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
           <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
             <div>
@@ -427,16 +426,13 @@ export default function RetailerOrdersClient() {
             </div>
           </div>
 
-          {/* Error */}
           {error ? (
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 font-bold">
               {error}
             </div>
           ) : null}
 
-          {/* Filters */}
           <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-3">
-            {/* Retailer search */}
             <div className="rounded-2xl border p-3">
               <div className="text-sm font-extrabold mb-2">Search retailer</div>
               <input
@@ -451,7 +447,6 @@ export default function RetailerOrdersClient() {
               </div>
             </div>
 
-            {/* Retailer select */}
             <div className="rounded-2xl border p-3">
               <div className="text-sm font-extrabold mb-2">Retailer filter</div>
               <select
@@ -470,7 +465,6 @@ export default function RetailerOrdersClient() {
               </select>
             </div>
 
-            {/* Range */}
             <div className="rounded-2xl border p-3">
               <div className="text-sm font-extrabold mb-2">Date Range</div>
               <select
@@ -511,7 +505,6 @@ export default function RetailerOrdersClient() {
           </div>
         </div>
 
-        {/* Orders */}
         <div className="rounded-2xl border bg-white shadow-sm p-4 md:p-6">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -522,7 +515,6 @@ export default function RetailerOrdersClient() {
             </div>
           </div>
 
-          {/* Mobile cards */}
           <div className="mt-4 grid grid-cols-1 gap-3 md:hidden">
             {orders.length === 0 ? (
               <div className="p-4 rounded-xl border text-gray-600 font-bold">No orders to show.</div>
@@ -595,7 +587,6 @@ export default function RetailerOrdersClient() {
             )}
           </div>
 
-          {/* Desktop table */}
           <div className="hidden md:block mt-4 overflow-auto rounded-xl border">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50">
@@ -632,7 +623,6 @@ export default function RetailerOrdersClient() {
                         <td className="p-3 font-bold">{o.status || "-"}</td>
                         <td className="p-3 text-right font-bold">{o.itemsCount ?? o.items?.length ?? 0}</td>
                         <td className="p-3 text-right font-extrabold">₹ {inr(Number(o.totalAmount || 0))}</td>
-
                         <td className="p-3 font-semibold">
                           {o.invoice?.id && o.invoice?.invoiceNo ? (
                             <a
@@ -648,7 +638,6 @@ export default function RetailerOrdersClient() {
                             <span className="text-gray-500">{o.billed ? "Yes" : "No"}</span>
                           )}
                         </td>
-
                         <td className="p-3 text-right">
                           <button
                             onClick={() => {
@@ -678,140 +667,174 @@ export default function RetailerOrdersClient() {
           </div>
         </div>
 
-        {/* PROCESS MODAL */}
         {processOpen && processOrder && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-            <div className="w-full max-w-4xl bg-white rounded-2xl shadow-lg overflow-hidden">
-              <div className="p-4 border-b flex items-center justify-between">
-                <div>
-                  <div className="text-lg font-extrabold">Process Order</div>
-                  <div className="text-xs text-gray-600 font-semibold">
-                    Order: <b>{processOrder.orderNo || processOrder.id.slice(-8)}</b> • Status:{" "}
-                    <b>{processOrder.status || "-"}</b>
+          <div className="fixed inset-0 z-50 bg-black/40">
+            <button
+              type="button"
+              aria-label="Close modal backdrop"
+              className="absolute inset-0 h-full w-full cursor-default"
+              onClick={closeProcess}
+            />
+
+            <div className="absolute inset-x-0 bottom-0 top-0 p-0 md:inset-x-auto md:left-1/2 md:top-1/2 md:bottom-auto md:w-full md:max-w-5xl md:-translate-x-1/2 md:-translate-y-1/2 md:p-4">
+              <div className="flex h-full w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-xl animate-[slideUp_.25s_ease-out] md:h-[88vh] md:rounded-2xl">
+                <div className="shrink-0 border-b bg-white p-4">
+                  <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-gray-300 md:hidden" />
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-lg font-extrabold">Process Order</div>
+                      <div className="text-xs text-gray-600 font-semibold">
+                        Order: <b>{processOrder.orderNo || processOrder.id.slice(-8)}</b> • Status:{" "}
+                        <b>{processOrder.status || "-"}</b>
+                      </div>
+                    </div>
+                    <button
+                      onClick={closeProcess}
+                      className="shrink-0 rounded-xl bg-gray-100 px-4 py-2 font-bold"
+                    >
+                      Close
+                    </button>
                   </div>
                 </div>
-                <button onClick={closeProcess} className="px-4 py-2 rounded-xl bg-gray-100 font-bold">
-                  Close
-                </button>
-              </div>
 
-              <div className="p-4 space-y-3">
-                {processMsg ? (
-                  <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 font-bold">
-                    {processMsg}
-                  </div>
-                ) : null}
+                <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
+                  {processMsg ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 font-bold">
+                      {processMsg}
+                    </div>
+                  ) : null}
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                  <div className="bg-gray-50 rounded-xl p-3">
-                    <div className="text-xs text-gray-600 font-bold">Retailer</div>
-                    <div className="font-extrabold">{processOrder.retailer?.name || "-"}</div>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3">
-                    <div className="text-xs text-gray-600 font-bold">Total</div>
-                    <div className="font-extrabold">₹ {inr(Number(processOrder.totalAmount || 0))}</div>
-                  </div>
-                  <div className="bg-gray-50 rounded-xl p-3">
-                    <div className="text-xs text-gray-600 font-bold">Invoice</div>
-                    <div className="font-extrabold">
-                      {processOrder.invoice?.invoiceNo || (processOrder.billed ? "Yes" : "No")}
+                  <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-600 font-bold">Retailer</div>
+                      <div className="font-extrabold">{processOrder.retailer?.name || "-"}</div>
+                    </div>
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-600 font-bold">Total</div>
+                      <div className="font-extrabold">₹ {inr(Number(processOrder.totalAmount || 0))}</div>
+                    </div>
+                    <div className="rounded-xl bg-gray-50 p-3">
+                      <div className="text-xs text-gray-600 font-bold">Invoice</div>
+                      <div className="font-extrabold">
+                        {processOrder.invoice?.invoiceNo || (processOrder.billed ? "Yes" : "No")}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="rounded-xl border overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr className="text-left">
-                        <th className="p-3">Product</th>
-                        <th className="p-3 text-right">Qty</th>
-                        <th className="p-3 text-right">Rate</th>
-                        <th className="p-3 text-right">Amount</th>
-                        <th className="p-3">Batch No</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(processOrder.items || []).length === 0 ? (
-                        <tr>
-                          <td className="p-3 text-gray-600 font-semibold" colSpan={5}>
-                            No items found
-                          </td>
+                  <div className="overflow-auto rounded-xl border">
+                    <table className="min-w-full text-sm">
+                      <thead className="sticky top-0 z-10 bg-gray-50">
+                        <tr className="text-left">
+                          <th className="p-3">Product</th>
+                          <th className="p-3 text-right">Qty</th>
+                          <th className="p-3 text-right">Rate</th>
+                          <th className="p-3 text-right">Amount</th>
+                          <th className="p-3">Batch No</th>
                         </tr>
-                      ) : (
-                        (processOrder.items || []).map((it) => {
-                          const k = keyOf(it.productName);
-                          const options = batchesByProduct.get(k) || [];
-                          const chosen = batchPick[k] || "";
+                      </thead>
+                      <tbody>
+                        {(processOrder.items || []).length === 0 ? (
+                          <tr>
+                            <td className="p-3 text-gray-600 font-semibold" colSpan={5}>
+                              No items found
+                            </td>
+                          </tr>
+                        ) : (
+                          (processOrder.items || []).map((it) => {
+                            const k = keyOf(it.productName);
+                            const options = batchesByProduct.get(k) || [];
+                            const chosen = batchPick[k] || "";
 
-                          return (
-                            <tr key={it.id} className="border-t">
-                              <td className="p-3 font-semibold">{it.productName}</td>
-                              <td className="p-3 text-right font-bold">{it.qty}</td>
-                              <td className="p-3 text-right">₹ {inr(Number(it.rate || 0))}</td>
-                              <td className="p-3 text-right font-extrabold">₹ {inr(Number(it.amount || 0))}</td>
+                            return (
+                              <tr key={it.id} className="border-t">
+                                <td className="p-3 font-semibold">{it.productName}</td>
+                                <td className="p-3 text-right font-bold">{it.qty}</td>
+                                <td className="p-3 text-right">₹ {inr(Number(it.rate || 0))}</td>
+                                <td className="p-3 text-right font-extrabold">₹ {inr(Number(it.amount || 0))}</td>
+                                <td className="min-w-[260px] p-3">
+                                  <select
+                                    className="w-full rounded-xl border bg-white px-3 py-2 text-sm font-semibold"
+                                    value={chosen}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setBatchPick((prev) => ({ ...prev, [k]: v }));
+                                    }}
+                                    disabled={batchesLoading}
+                                  >
+                                    <option value="">
+                                      {batchesLoading ? "Loading batches..." : "Select batch"}
+                                    </option>
+                                    {options.map((b, idx) => {
+                                      const avail = b.qty == null ? null : Number(b.qty);
+                                      const ok = avail == null ? true : avail >= it.qty;
+                                      const label = `${b.batchNo} • Exp ${fmtDate(b.expiryDate)}${
+                                        avail == null ? "" : ` • Avl ${avail}`
+                                      }`;
+                                      return (
+                                        <option
+                                          key={`${b.batchNo}-${idx}`}
+                                          value={b.batchNo}
+                                          disabled={!ok}
+                                        >
+                                          {label}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
 
-                              <td className="p-3 min-w-[260px]">
-                                <select
-                                  className="w-full rounded-xl border px-3 py-2 text-sm bg-white font-semibold"
-                                  value={chosen}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    setBatchPick((prev) => ({ ...prev, [k]: v }));
-                                  }}
-                                  disabled={batchesLoading}
-                                >
-                                  <option value="">
-                                    {batchesLoading ? "Loading batches..." : "Select batch"}
-                                  </option>
-                                  {options.map((b, idx) => {
-                                    const avail = b.qty == null ? null : Number(b.qty);
-                                    const ok = avail == null ? true : avail >= it.qty;
-                                    const label = `${b.batchNo} • Exp ${fmtDate(b.expiryDate)}${
-                                      avail == null ? "" : ` • Avl ${avail}`
-                                    }`;
-                                    return (
-                                      <option key={`${b.batchNo}-${idx}`} value={b.batchNo} disabled={!ok}>
-                                        {label}
-                                      </option>
-                                    );
-                                  })}
-                                </select>
+                                  <div className="mt-1 text-[11px] text-gray-500 font-semibold">
+                                    Qty/Rate fixed. Batch select compulsory.
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
 
-                                <div className="mt-1 text-[11px] text-gray-500 font-semibold">
-                                  Qty/Rate fixed. Batch select compulsory.
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                  <div className="text-xs text-gray-500 font-semibold">
+                    In the dropdown, the batch will be disabled if the available quantity is less than the order quantity.
+                  </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-2 pt-2">
-                  <button
-                    onClick={() => loadBatchesForModal((processOrder.items || []).map((x) => x.productName))}
-                    className="px-4 py-2 rounded-xl border font-bold text-sm"
-                    disabled={batchesLoading}
-                  >
-                    {batchesLoading ? "Loading..." : "Reload Batches"}
-                  </button>
+                <div className="shrink-0 border-t bg-white p-4">
+                  <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <button
+                      onClick={() =>
+                        loadBatchesForModal((processOrder.items || []).map((x) => x.productName))
+                      }
+                      className="rounded-xl border px-4 py-2 text-sm font-bold"
+                      disabled={batchesLoading}
+                    >
+                      {batchesLoading ? "Loading..." : "Reload Batches"}
+                    </button>
 
-                  <button
-                    onClick={submitProcessGenerateInvoice}
-                    className="px-5 py-2 rounded-xl bg-black text-white font-extrabold text-sm disabled:opacity-50"
-                    disabled={processing || batchesLoading}
-                  >
-                    {processing ? "Processing..." : "Generate Invoice"}
-                  </button>
-                </div>
-
-                <div className="text-xs text-gray-500 font-semibold">
-                  In the dropdown, the batch will be disabled if the available quantity is less than the order quantity.
+                    <button
+                      onClick={submitProcessGenerateInvoice}
+                      className="rounded-xl bg-black px-5 py-2 text-sm font-extrabold text-white disabled:opacity-50"
+                      disabled={processing || batchesLoading}
+                    >
+                      {processing ? "Processing..." : "Generate Invoice"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
+
+            <style jsx global>{`
+              @keyframes slideUp {
+                from {
+                  opacity: 0;
+                  transform: translateY(24px);
+                }
+                to {
+                  opacity: 1;
+                  transform: translateY(0);
+                }
+              }
+            `}</style>
           </div>
         )}
       </div>

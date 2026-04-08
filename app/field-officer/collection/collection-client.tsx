@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type SortKey = "RECENT" | "OLDEST" | "HIGH" | "LOW" | "NAME_AZ";
 
@@ -54,17 +55,17 @@ function normalizeWhatsAppPhone(phone?: string | null) {
 
   if (!digits) return "";
 
-  // 10 digit Indian mobile -> add 91
   if (digits.length === 10) return `91${digits}`;
-
-  // already with India code
   if (digits.length === 12 && digits.startsWith("91")) return digits;
 
-  // fallback: return digits as-is
   return digits;
 }
 
-function Icon({ name }: { name: "download" | "close" | "rupee" | "share" }) {
+function Icon({
+  name,
+}: {
+  name: "download" | "close" | "rupee" | "share" | "back";
+}) {
   const c = "h-5 w-5";
 
   if (name === "download")
@@ -85,7 +86,12 @@ function Icon({ name }: { name: "download" | "close" | "rupee" | "share" }) {
   if (name === "close")
     return (
       <svg className={c} viewBox="0 0 24 24" fill="none">
-        <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path
+          d="M6 6l12 12M18 6 6 18"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
       </svg>
     );
 
@@ -94,6 +100,19 @@ function Icon({ name }: { name: "download" | "close" | "rupee" | "share" }) {
       <svg className={c} viewBox="0 0 24 24" fill="none">
         <path
           d="M8.5 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7 4a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-7 5a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm2.6-10.6 2.8 1.6m-2.8 1.4 2.8-1.6"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+
+  if (name === "back")
+    return (
+      <svg className={c} viewBox="0 0 24 24" fill="none">
+        <path
+          d="M15 6l-6 6 6 6"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
@@ -116,6 +135,8 @@ function Icon({ name }: { name: "download" | "close" | "rupee" | "share" }) {
 }
 
 export default function CollectionPage() {
+  const router = useRouter();
+
   // List
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortKey>("RECENT");
@@ -356,100 +377,117 @@ export default function CollectionPage() {
   const compactRows = useMemo(() => rows, [rows]);
 
   return (
-    <div className="p-0 space-y-3">
-      <div className="flex items-end justify-center">
-        <div>
-          <div className="text-2xl font-extrabold">Collection</div>
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-black/10 bg-white p-3 shadow-sm space-y-2">
-        <input
-          placeholder="Search retailer / city / phone…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="w-full rounded-xl border border-black/10 bg-black/5 px-3 py-3 text-sm outline-none"
-        />
-
-        <div className="flex items-center gap-2">
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none"
-          >
-            <option value="RECENT">Most recent</option>
-            <option value="OLDEST">Oldest</option>
-            <option value="HIGH">Highest amount</option>
-            <option value="LOW">Least amount</option>
-            <option value="NAME_AZ">Name A to Z</option>
-          </select>
-
+    <div className="space-y-3 pb-3">
+      <div className="sticky top-0 z-40 border-b border-black/10 bg-white/95 backdrop-blur">
+        <div className="relative flex items-center px-3 py-3">
           <button
             type="button"
-            onClick={() => {
-              if (!active) {
-                setToast("Select retailer to download ledger");
-                return;
-              }
-              window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
-                active.retailerId
-              )}`;
-            }}
-            className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
-            title="Download selected retailer ledger"
+            onClick={() => router.back()}
+            className="inline-flex items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm active:scale-[0.98]"
           >
-            <Icon name="download" />
+            <Icon name="back" />
+            <span>Back</span>
           </button>
+
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-16">
+            <div className="truncate text-lg font-extrabold text-gray-900">Collection</div>
+          </div>
         </div>
       </div>
 
-      {toast ? (
-        <div className="rounded-2xl bg-black/5 px-4 py-3 text-sm font-semibold text-gray-800">
-          {toast}
+      <div className="px-3">
+        <div className="rounded-2xl border border-black/10 bg-white p-3 shadow-sm space-y-2">
+          <input
+            placeholder="Search retailer / city / phone…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="w-full rounded-xl border border-black/10 bg-black/5 px-3 py-3 text-sm outline-none"
+          />
+
+          <div className="flex items-center gap-2">
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              className="flex-1 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold outline-none"
+            >
+              <option value="RECENT">Most recent</option>
+              <option value="OLDEST">Oldest</option>
+              <option value="HIGH">Highest amount</option>
+              <option value="LOW">Least amount</option>
+              <option value="NAME_AZ">Name A to Z</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!active) {
+                  setToast("Select retailer to download ledger");
+                  return;
+                }
+                window.location.href = `/api/field-officer/collections/ledger/export?retailerId=${encodeURIComponent(
+                  active.retailerId
+                )}`;
+              }}
+              className="rounded-xl border border-black/10 bg-white px-3 py-2 text-gray-800 shadow-sm"
+              title="Download selected retailer ledger"
+            >
+              <Icon name="download" />
+            </button>
+          </div>
         </div>
-      ) : null}
+      </div>
 
-      {loading ? (
-        <div className="text-sm text-gray-500">Loading…</div>
-      ) : compactRows.length ? (
-        <div className="space-y-2">
-          {compactRows.map((r) => {
-            const b = Number(r.balance || 0);
-            const isActive = active?.retailerId === r.retailerId;
+      <div className="px-3">
+        {toast ? (
+          <div className="rounded-2xl bg-black/5 px-4 py-3 text-sm font-semibold text-gray-800">
+            {toast}
+          </div>
+        ) : null}
+      </div>
 
-            return (
-              <button
-                key={r.retailerId}
-                type="button"
-                onClick={() => openLedger(r)}
-                className={[
-                  "w-full rounded-xl border bg-white px-3 py-2 text-left shadow-sm active:scale-[0.99]",
-                  isActive ? "border-gray-900" : "border-black/10",
-                ].join(" ")}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-gray-900">{r.name}</div>
-                    <div className="truncate text-[11px] text-gray-500">
-                      {r.city || "—"}
-                      {r.phone ? ` • ${r.phone}` : ""}
+      <div className="px-3">
+        {loading ? (
+          <div className="text-sm text-gray-500">Loading…</div>
+        ) : compactRows.length ? (
+          <div className="space-y-2">
+            {compactRows.map((r) => {
+              const b = Number(r.balance || 0);
+              const isActive = active?.retailerId === r.retailerId;
+
+              return (
+                <button
+                  key={r.retailerId}
+                  type="button"
+                  onClick={() => openLedger(r)}
+                  className={[
+                    "w-full rounded-xl border bg-white px-3 py-2 text-left shadow-sm active:scale-[0.99]",
+                    isActive ? "border-gray-900" : "border-black/10",
+                  ].join(" ")}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-gray-900">{r.name}</div>
+                      <div className="truncate text-[11px] text-gray-500">
+                        {r.city || "—"}
+                        {r.phone ? ` • ${r.phone}` : ""}
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className={["text-sm font-extrabold", balanceColor(b)].join(" ")}>
+                        {inr(Math.abs(b))}
+                      </div>
+                      <div className="text-[10px] text-gray-500">{balanceLabel(b)}</div>
                     </div>
                   </div>
-
-                  <div className="text-right">
-                    <div className={["text-sm font-extrabold", balanceColor(b)].join(" ")}>
-                      {inr(Math.abs(b))}
-                    </div>
-                    <div className="text-[10px] text-gray-500">{balanceLabel(b)}</div>
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="text-sm text-gray-500">No retailers found</div>
-      )}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No retailers found</div>
+        )}
+      </div>
 
       {open && active && (
         <div className="fixed inset-0 z-50 flex items-end bg-black/40">

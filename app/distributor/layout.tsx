@@ -18,7 +18,6 @@ const TABS = [
   { href: "/distributor/dashboard", label: "Dashboard" },
   { href: "/distributor/stock", label: "Stock" },
   { href: "/distributor/retailer-orders", label: "Orders" },
-  { href: "/distributor/sales", label: "Sales" },
   { href: "/distributor/ledger", label: "Ledger" },
   { href: "/distributor/reports", label: "Reports" },
   { href: "/distributor/users", label: "Users" },

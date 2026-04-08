@@ -22,7 +22,6 @@ function clsx(...a: Array<string | false | null | undefined>) {
   return a.filter(Boolean).join(" ");
 }
 
-// ✅ Hydration-safe OnlineChip (SSR + first client render same)
 function OnlineChip() {
   const [mounted, setMounted] = React.useState(false);
   const [online, setOnline] = React.useState(true);
@@ -35,17 +34,17 @@ function OnlineChip() {
 
     window.addEventListener("online", update);
     window.addEventListener("offline", update);
+
     return () => {
       window.removeEventListener("online", update);
       window.removeEventListener("offline", update);
     };
   }, []);
 
-  // ✅ SSR + hydration stable placeholder
   if (!mounted) {
     return (
       <span
-        className="rounded-full border px-2 py-1 text-[11px] font-extrabold border-gray-200 bg-gray-50 text-gray-700"
+        className="inline-flex h-7 items-center rounded-full border border-gray-200 bg-gray-50 px-2.5 text-[11px] font-extrabold text-gray-700"
         title="Checking"
       >
         ● Checking
@@ -56,8 +55,10 @@ function OnlineChip() {
   return (
     <span
       className={clsx(
-        "rounded-full border px-2 py-1 text-[11px] font-extrabold",
-        online ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"
+        "inline-flex h-7 items-center rounded-full border px-2.5 text-[11px] font-extrabold",
+        online
+          ? "border-green-200 bg-green-50 text-green-700"
+          : "border-red-200 bg-red-50 text-red-700"
       )}
       title={online ? "Online" : "Offline"}
     >
@@ -70,23 +71,29 @@ function OfflineSyncBar() {
   const { pending, syncing, msg, runSync } = useOfflineSync();
 
   return (
-    <div className="mt-2 flex items-center justify-between gap-2">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <OnlineChip />
-        <span className="rounded-full border border-black/10 bg-white px-2 py-1 text-[11px] font-extrabold text-black/70">
+
+        <span className="inline-flex h-7 items-center rounded-full border border-black/10 bg-gray-50 px-2.5 text-[11px] font-extrabold text-black/70">
           Pending: {pending}
         </span>
-        {msg ? <span className="truncate text-[11px] font-bold text-black/50">{msg}</span> : null}
+
+        {msg ? (
+          <span className="min-w-0 max-w-full truncate text-[11px] font-bold text-black/50">
+            {msg}
+          </span>
+        ) : null}
       </div>
 
       <button
         onClick={runSync}
         disabled={syncing || pending === 0}
         className={clsx(
-          "shrink-0 rounded-full border px-3 py-1 text-[11px] font-extrabold",
+          "inline-flex h-8 shrink-0 items-center justify-center rounded-full border px-3 text-[11px] font-extrabold transition",
           syncing || pending === 0
             ? "border-black/10 bg-gray-100 text-black/40"
-            : "border-black bg-black text-white hover:opacity-90"
+            : "border-black bg-black text-white active:scale-[0.98]"
         )}
         title="Sync offline saved work to server"
         type="button"
@@ -97,7 +104,11 @@ function OfflineSyncBar() {
   );
 }
 
-export default function FieldOfficerLayout({ children }: { children: React.ReactNode }) {
+export default function FieldOfficerLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -112,59 +123,74 @@ export default function FieldOfficerLayout({ children }: { children: React.React
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="mx-auto w-full max-w-md px-2 pt-1">
-        <div className="rounded-xl border border-black/10 bg-white p-2 shadow-sm">
-          <div className="relative flex items-center justify-center">
-            <Image
-              src="/beautsoul-logo.png"
-              alt="BeautSoul"
-              width={140}
-              height={40}
-              priority
-              className="h-10 w-auto"
-            />
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white text-gray-900">
+      <div className="mx-auto w-full max-w-md px-3 pt-[max(10px,env(safe-area-inset-top))]">
+        {/* Header */}
+        <header className="rounded-2xl border border-black/10 bg-white px-3 py-3 shadow-sm">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <div />
 
-            {/* Exit Button */}
-            <button
-              onClick={handleExit}
-              className="absolute right-0 rounded-lg border border-red-200 bg-red-50 px-3 py-1 text-xs font-extrabold text-red-600"
-              type="button"
-            >
-              Exit
-            </button>
+            <div className="flex justify-center">
+              <Image
+                src="/beautsoul-logo.png"
+                alt="BeautSoul"
+                width={150}
+                height={42}
+                priority
+                className="h-10 w-auto object-contain"
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={handleExit}
+                className="inline-flex h-9 items-center justify-center rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-extrabold text-red-600 transition active:scale-[0.98]"
+                type="button"
+              >
+                Exit
+              </button>
+            </div>
           </div>
 
-          {/* ✅ Offline sync bar */}
           <OfflineSyncBar />
-        </div>
+        </header>
+
+        {/* Content */}
+        <main className="pb-[110px] pt-3">
+          {children}
+        </main>
       </div>
 
-      {/* Content */}
-      <div className="mx-auto w-full max-w-md px-3 pb-24 pt-0">{children}</div>
-
       {/* Bottom Nav */}
-      <div className="fixed bottom-0 left-0 right-0 z-50" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className="mx-auto w-full max-w-md px-2 pb-2">
-          <div className="rounded-3xl border border-black/10 bg-white/95 shadow-[0_18px_40px_rgba(0,0,0,0.18)] backdrop-blur">
+      <nav
+        className="fixed inset-x-0 bottom-0 z-50"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="mx-auto w-full max-w-md px-3 pb-3">
+          <div className="overflow-hidden rounded-[26px] border border-black/10 bg-white/95 shadow-[0_12px_30px_rgba(0,0,0,0.14)] backdrop-blur">
             <div className="grid grid-cols-4">
               {TABS.map((t) => {
                 const active = isActive(pathname, t.href);
+
                 return (
                   <Link
                     key={t.href}
                     href={t.href}
-                    className={clsx("py-3 text-center text-xs font-extrabold", active ? "text-gray-900" : "text-gray-500")}
+                    className={clsx(
+                      "flex min-h-[62px] items-center justify-center px-1 text-center text-[11px] font-extrabold transition",
+                      active
+                        ? "bg-gray-900 text-white"
+                        : "text-gray-500 active:bg-gray-50"
+                    )}
                   >
-                    {t.label}
+                    <span className="leading-tight">{t.label}</span>
                   </Link>
                 );
               })}
             </div>
           </div>
         </div>
-      </div>
+      </nav>
     </div>
   );
 }

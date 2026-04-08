@@ -3,26 +3,113 @@
 import React from "react";
 import { MiniStat } from "./ui";
 
+const months = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+const commonCls = "bg-white border-gray-200";
+
+type Props = {
+  totalSales4m?: string | number;
+  todaySales?: string | number;
+  thisWeekSales?: string | number;
+  thisMonthSales?: string | number;
+  monthlySales?: number[];
+  summary?: any;
+};
+
 export default function RetailersSummaryStrip({
   totalSales4m,
+  todaySales,
+  thisWeekSales,
+  thisMonthSales,
+  monthlySales = [],
   summary,
-}: {
-  totalSales4m: string;
-  summary: any;
-}) {
+}: Props) {
+  const hasNewSalesStrip =
+    todaySales !== undefined ||
+    thisWeekSales !== undefined ||
+    thisMonthSales !== undefined ||
+    (monthlySales?.length ?? 0) > 0;
+
   return (
-    <div className="mt-5 p-3 rounded-2xl border bg-white">
+    <div className="mt-5 rounded-2xl border bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <MiniStat label="Sales (last 4m)" value={totalSales4m} cls="bg-blue-50 border-blue-200" />
-        <MiniStat label="Retailers" value={summary?.totalRetailers ?? 0} cls="bg-gray-50 border-gray-200" />
-        <MiniStat label="Active ≤30d" value={summary?.active30 ?? 0} cls="bg-green-50 border-green-200" />
-        <MiniStat label="Inactive 31–60d" value={summary?.inactive31_60 ?? 0} cls="bg-yellow-50 border-yellow-200" />
-        <MiniStat label="Dormant 61–90d" value={summary?.dormant61_90 ?? 0} cls="bg-orange-50 border-orange-200" />
-        <MiniStat label="Dead 90+d" value={summary?.dead90 ?? 0} cls="bg-red-50 border-red-200" />
-        <div className="w-px h-6 bg-gray-200 mx-1" />
-        <MiniStat label="Distributors" value={summary?.totalDistributors ?? 0} cls="bg-gray-50 border-gray-200" />
-        <MiniStat label="New Retailers" value={summary?.newRetailers ?? 0} cls="bg-gray-50 border-gray-200" />
-        <MiniStat label="New Distributors" value={summary?.newDistributors ?? 0} cls="bg-gray-50 border-gray-200" />
+        {/* Old mode fallback */}
+        {!hasNewSalesStrip && (
+          <MiniStat
+            label="Sales (last 4m)"
+            value={totalSales4m ?? 0}
+            cls={commonCls}
+          />
+        )}
+
+        {/* New mode */}
+        {hasNewSalesStrip && (
+          <>
+            <MiniStat label="Today" value={todaySales ?? 0} cls={commonCls} />
+            <MiniStat label="This Week" value={thisWeekSales ?? 0} cls={commonCls} />
+            <MiniStat label="This Month" value={thisMonthSales ?? 0} cls={commonCls} />
+
+            <div className="mx-1 h-6 w-px bg-gray-200" />
+
+            {months.map((m, i) => (
+              <MiniStat
+                key={m}
+                label={m}
+                value={monthlySales?.[i] ?? 0}
+                cls={commonCls}
+              />
+            ))}
+          </>
+        )}
+
+        <div className="mx-1 h-6 w-px bg-gray-200" />
+
+        <MiniStat
+          label="Retailers"
+          value={summary?.totalRetailers ?? 0}
+          cls={commonCls}
+        />
+        <MiniStat
+          label="Active ≤30d"
+          value={summary?.active30 ?? 0}
+          cls={commonCls}
+        />
+        <MiniStat
+          label="Inactive 31–60d"
+          value={summary?.inactive31_60 ?? 0}
+          cls={commonCls}
+        />
+        <MiniStat
+          label="Dormant 61–90d"
+          value={summary?.dormant61_90 ?? 0}
+          cls={commonCls}
+        />
+        <MiniStat
+          label="Dead 90+d"
+          value={summary?.dead90 ?? 0}
+          cls={commonCls}
+        />
+
+        <div className="mx-1 h-6 w-px bg-gray-200" />
+
+        <MiniStat
+          label="Distributors"
+          value={summary?.totalDistributors ?? 0}
+          cls={commonCls}
+        />
+        <MiniStat
+          label="New Retailers"
+          value={summary?.newRetailers ?? 0}
+          cls={commonCls}
+        />
+        <MiniStat
+          label="New Distributors"
+          value={summary?.newDistributors ?? 0}
+          cls={commonCls}
+        />
       </div>
     </div>
   );

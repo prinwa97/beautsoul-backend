@@ -14,6 +14,7 @@ type SMMeta = {
 };
 
 const TABS = [
+  { href: "/sales-manager/dashboard", label: "Dashboard" },
   { href: "/sales-manager/field-officers", label: "Field Officers" },
   { href: "/sales-manager/distributor-orders", label: "Create Order" },
   { href: "/sales-manager/retailers", label: "Retailers" },

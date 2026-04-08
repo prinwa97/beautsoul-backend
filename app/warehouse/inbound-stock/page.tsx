@@ -14,6 +14,7 @@ type StockLot = {
   batchNo: string;
   mfgDate: string | null;
   expDate: string | null;
+  receivedQty: number;
   qtyOnHandPcs: number;
   createdAt: string;
   updatedAt: string;
@@ -144,11 +145,11 @@ export default function StockInPage() {
     const bn = batchNo.trim();
     const qn = Number(qty || 0);
 
-    if (!pn) return setMsg({ type: "err", text: "Product select karo" });
-    if (!bn) return setMsg({ type: "err", text: "Batch No required" });
-    if (!mfgDate) return setMsg({ type: "err", text: "MFG Date required" });
-    if (!expDate) return setMsg({ type: "err", text: "EXP Date required" });
-    if (!qty || qn <= 0) return setMsg({ type: "err", text: "Qty must be > 0" });
+    if (!pn) return setMsg({ type: "err", text: "Please select a product" });
+    if (!bn) return setMsg({ type: "err", text: "Batch number is required" });
+    if (!mfgDate) return setMsg({ type: "err", text: "MFG date is required" });
+    if (!expDate) return setMsg({ type: "err", text: "EXP date is required" });
+    if (!qty || qn <= 0) return setMsg({ type: "err", text: "Quantity must be greater than 0" });
 
     const md = new Date(mfgDate);
     const ed = new Date(expDate);
@@ -223,11 +224,11 @@ export default function StockInPage() {
     const bn = editBatchNo.trim();
     const qn = Number(editQty || 0);
 
-    if (!pn) return setMsg({ type: "err", text: "Product select karo" });
-    if (!bn) return setMsg({ type: "err", text: "Batch No required" });
-    if (!editMfgDate) return setMsg({ type: "err", text: "MFG Date required" });
-    if (!editExpDate) return setMsg({ type: "err", text: "EXP Date required" });
-    if (!editQty || qn <= 0) return setMsg({ type: "err", text: "Qty must be > 0" });
+    if (!pn) return setMsg({ type: "err", text: "Please select a product" });
+    if (!bn) return setMsg({ type: "err", text: "Batch number is required" });
+    if (!editMfgDate) return setMsg({ type: "err", text: "MFG date is required" });
+    if (!editExpDate) return setMsg({ type: "err", text: "EXP date is required" });
+    if (!editQty || qn <= 0) return setMsg({ type: "err", text: "Quantity must be greater than 0" });
 
     const md = new Date(editMfgDate);
     const ed = new Date(editExpDate);
@@ -288,7 +289,7 @@ export default function StockInPage() {
           <div>
             <div className="text-2xl font-extrabold tracking-tight">Warehouse • Stock In</div>
             <div className="mt-1 text-sm text-white/85">
-              Production se aaya stock yahan add hoga — har entry me <b>new batch no</b>.
+              Add production stock here. Each entry must have a <b>unique batch number</b>.
             </div>
           </div>
 
@@ -317,11 +318,11 @@ export default function StockInPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-5">
-        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm xl:col-span-2">
+      <div className="flex flex-col gap-5">
+        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="text-lg font-bold text-gray-900">Add New Batch</div>
           <div className="mt-1 text-xs text-gray-600">
-            Product select → Batch No → MFG/EXP → Qty → Save
+            Product → Batch No → Quantity / MFG / EXP → Save
           </div>
 
           {editing && (
@@ -399,7 +400,7 @@ export default function StockInPage() {
                 </div>
 
                 <div>
-                  <label className="text-sm font-semibold text-gray-800">Qty (pcs)</label>
+                  <label className="text-sm font-semibold text-gray-800">Quantity (pcs)</label>
                   <input
                     className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
                     value={editQty}
@@ -420,58 +421,72 @@ export default function StockInPage() {
                 </button>
 
                 <div className="text-[11px] text-gray-600">
-                  Note: Edit se product, batch number, dates aur qty sab update ho jayega.
+                  Note: Editing will update the product, batch number, dates, and quantity.
                 </div>
               </div>
             </div>
           )}
 
-          <div className="mt-4 space-y-3">
-            <div>
-              <label className="text-sm font-semibold text-gray-800">Product</label>
-              <select
-                className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
-                value={productName}
-                onChange={(e) => setProductName(e.target.value)}
-                disabled={loadingProducts || saving}
-              >
-                <option value="">
-                  {loadingProducts ? "Loading products..." : "Select product"}
-                </option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.name}
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label className="text-sm font-semibold text-gray-800">Product</label>
+                <select
+                  className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black disabled:bg-gray-50 disabled:text-gray-500"
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  disabled={loadingProducts || saving}
+                >
+                  <option value="">
+                    {loadingProducts ? "Loading..." : "Select product"}
                   </option>
-                ))}
-              </select>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
 
-              {products.length === 0 && !loadingProducts && (
-                <div className="mt-1 text-xs text-gray-600">
-                  No products found. Pehle <b>Warehouse → Products</b> me product add karo.
+                {products.length === 0 && !loadingProducts && (
+                  <div className="mt-1 text-xs text-gray-600">
+                    No products found. Please add a product first in <b>Warehouse → Products</b>.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-800">Batch No</label>
+                <input
+                  className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
+                  value={batchNo}
+                  onChange={(e) => setBatchNo(e.target.value)}
+                  placeholder="e.g. sc0003"
+                  disabled={saving}
+                />
+                <div className="mt-1 text-[11px] text-gray-500">
+                  Use a unique batch number for each entry.
                 </div>
-              )}
-            </div>
+              </div>
 
-            <div>
-              <label className="text-sm font-semibold text-gray-800">Batch No (Unique)</label>
-              <input
-                className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
-                value={batchNo}
-                onChange={(e) => setBatchNo(e.target.value)}
-                placeholder="e.g. sc0003"
-                disabled={saving}
-              />
-              <div className="mt-1 text-xs text-gray-500">
-                Har entry me new batch no use karo (same batch repeat mat karo).
+              <div>
+                <label className="text-sm font-semibold text-gray-800">Qty Received</label>
+                <input
+                  className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
+                  value={qty}
+                  onChange={(e) => setQty(e.target.value.replace(/[^\d]/g, ""))}
+                  placeholder="e.g. 10000"
+                  inputMode="numeric"
+                  disabled={saving}
+                />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div>
                 <label className="text-sm font-semibold text-gray-800">MFG Date</label>
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black"
+                  className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black"
                   value={mfgDate}
                   onChange={(e) => setMfgDate(e.target.value)}
                   disabled={saving}
@@ -482,38 +497,28 @@ export default function StockInPage() {
                 <label className="text-sm font-semibold text-gray-800">EXP Date</label>
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-black"
+                  className="mt-1 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black"
                   value={expDate}
                   onChange={(e) => setExpDate(e.target.value)}
                   disabled={saving}
                 />
               </div>
-            </div>
 
-            <div>
-              <label className="text-sm font-semibold text-gray-800">Qty received (pcs)</label>
-              <input
-                className="mt-1 w-full rounded-2xl border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-black"
-                value={qty}
-                onChange={(e) => setQty(e.target.value.replace(/[^\d]/g, ""))}
-                placeholder="e.g. 10000"
-                inputMode="numeric"
-                disabled={saving}
-              />
+              <div className="flex items-end">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  type="button"
+                  className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {saving ? "Saving..." : "Save Batch"}
+                </button>
+              </div>
             </div>
-
-            <button
-              onClick={save}
-              disabled={saving}
-              type="button"
-              className="w-full rounded-2xl bg-slate-900 px-5 py-3 text-sm font-extrabold text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              {saving ? "Saving..." : "Save Batch"}
-            </button>
           </div>
         </div>
 
-        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm xl:col-span-3">
+        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <div className="text-lg font-bold text-gray-900">Current Company Stock Lots</div>
@@ -553,7 +558,8 @@ export default function StockInPage() {
                   <th className="px-3 py-3 text-left font-bold">Batch No</th>
                   <th className="px-3 py-3 text-left font-bold">MFG</th>
                   <th className="px-3 py-3 text-left font-bold">EXP</th>
-                  <th className="px-3 py-3 text-right font-bold">Qty (pcs)</th>
+                  <th className="px-3 py-3 text-right font-bold">Received Qty</th>
+                  <th className="px-3 py-3 text-right font-bold">Current Qty</th>
                   <th className="px-3 py-3 text-left font-bold">Added</th>
                   <th className="px-3 py-3 text-right font-bold">Action</th>
                 </tr>
@@ -562,13 +568,13 @@ export default function StockInPage() {
               <tbody className="text-gray-900">
                 {loadingLots ? (
                   <tr>
-                    <td className="px-3 py-4 text-gray-600" colSpan={7}>
+                    <td className="px-3 py-4 text-gray-600" colSpan={8}>
                       Loading lots...
                     </td>
                   </tr>
                 ) : filteredLots.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-4 text-gray-600" colSpan={7}>
+                    <td className="px-3 py-4 text-gray-600" colSpan={8}>
                       No lots found.
                     </td>
                   </tr>
@@ -576,17 +582,26 @@ export default function StockInPage() {
                   filteredLots.map((x) => (
                     <tr key={x.id} className="border-t border-gray-100 hover:bg-slate-50">
                       <td className="px-3 py-3 font-semibold text-gray-900">{x.productName}</td>
+
                       <td className="px-3 py-3">
                         <span className="inline-flex items-center rounded-xl bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-800">
                           {x.batchNo || "-"}
                         </span>
                       </td>
+
                       <td className="px-3 py-3 text-gray-800">{fmtDate(x.mfgDate)}</td>
                       <td className="px-3 py-3 text-gray-800">{fmtDate(x.expDate)}</td>
-                      <td className="px-3 py-3 text-right font-extrabold text-gray-900">
+
+                      <td className="px-3 py-3 text-right font-extrabold text-slate-900">
+                        {n(x.receivedQty).toLocaleString("en-IN")}
+                      </td>
+
+                      <td className="px-3 py-3 text-right font-extrabold text-emerald-700">
                         {n(x.qtyOnHandPcs).toLocaleString("en-IN")}
                       </td>
+
                       <td className="px-3 py-3 text-xs text-gray-600">{fmtDate(x.createdAt)}</td>
+
                       <td className="px-3 py-3 text-right">
                         <button
                           className="rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-xs font-extrabold text-gray-800 hover:bg-slate-50"
@@ -605,7 +620,7 @@ export default function StockInPage() {
           </div>
 
           <div className="mt-3 text-xs text-gray-500">
-            Tip: Agar kisi lot me product, batch, dates ya qty galat ho, row ke <b>Edit</b> button se update kar lo.
+            Tip: If any product, batch, date, or quantity is incorrect, use the <b>Edit</b> button to update the lot.
           </div>
         </div>
       </div>

@@ -137,6 +137,7 @@ export async function POST(req: Request) {
         batchNo,
         mfgDate,
         expDate,
+        receivedQty: qty,
         qtyOnHandPcs: qty,
       },
     });
@@ -147,7 +148,7 @@ export async function POST(req: Request) {
 
     if (msg.includes("P2002") || msg.toLowerCase().includes("unique")) {
       return NextResponse.json(
-        { ok: false, error: "Batch No already exists. New batch number use karo." },
+        { ok: false, error: "Batch No already exists. Please use a new batch number." },
         { status: 409 }
       );
     }
@@ -242,7 +243,7 @@ export async function PATCH(req: Request) {
 
     if (duplicateBatch) {
       return NextResponse.json(
-        { ok: false, error: "Batch No already exists. Different batch number use karo." },
+        { ok: false, error: "Batch No already exists. Please use a different batch number." },
         { status: 409 }
       );
     }
@@ -254,6 +255,7 @@ export async function PATCH(req: Request) {
         batchNo,
         mfgDate,
         expDate,
+        receivedQty: qty,
         qtyOnHandPcs: qty,
       },
     });
@@ -264,7 +266,7 @@ export async function PATCH(req: Request) {
 
     if (msg.includes("P2002") || msg.toLowerCase().includes("unique")) {
       return NextResponse.json(
-        { ok: false, error: "Batch No already exists. Different batch number use karo." },
+        { ok: false, error: "Batch No already exists. Please use a different batch number." },
         { status: 409 }
       );
     }
