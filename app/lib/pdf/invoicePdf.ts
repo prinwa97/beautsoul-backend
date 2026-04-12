@@ -285,7 +285,7 @@ export function buildInvoicePdfBuffer(data: InvoicePdfInput): Promise<Buffer> {
       doc.font("REG").fontSize(9).text("2. Interest @ 18% p.a. will be charged if payment is delayed.", left, footY + 28);
       doc.font("REG").fontSize(9).text("3. Subject to local jurisdiction only.", left, footY + 42);
 
-      doc.font("REG").fontSize(9).text("Receiver's Signature :", right - 190, footY + 14);
+      doc.font("REG").fontSize(9).text("Distributor's Signature :", right - 190, footY + 14);
       doc.font("REG").fontSize(9).text(`for ${safe(data.seller.firmName)}`, right - 190, footY + 40);
       doc.font("REG").fontSize(9).text("Authorised Signatory", right - 190, footY + 58);
 

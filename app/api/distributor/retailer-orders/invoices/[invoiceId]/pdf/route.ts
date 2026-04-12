@@ -106,14 +106,23 @@ const STATE_CODE: Record<string, string> = {
   "MADHYA PRADESH": "23",
 };
 
-// ✅ IMPORTANT: ctx type = any (Next 16 strict route type-checker workaround)
-export async function GET(req: NextRequest, ctx: any) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ invoiceId?: string }> }
+) {
   try {
     const gate = await requireDistributor();
-    if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error }, { status: gate.status });
+    if (!gate.ok) {
+      return NextResponse.json({ ok: false, error: gate.error }, { status: gate.status });
+    }
 
-    const invoiceId = asStr(ctx?.params?.invoiceId);
-    if (!invoiceId) return NextResponse.json({ ok: false, error: "invoiceId required" }, { status: 400 });
+    // ✅ FIX: Next 15/16 params Promise ko await karo
+    const { invoiceId: rawInvoiceId } = await ctx.params;
+    const invoiceId = asStr(rawInvoiceId);
+
+    if (!invoiceId) {
+      return NextResponse.json({ ok: false, error: "invoiceId required" }, { status: 400 });
+    }
 
     const inv = await prisma.invoice.findUnique({
       where: { id: invoiceId },
@@ -124,7 +133,9 @@ export async function GET(req: NextRequest, ctx: any) {
       },
     });
 
-    if (!inv) return NextResponse.json({ ok: false, error: "Invoice not found" }, { status: 404 });
+    if (!inv) {
+      return NextResponse.json({ ok: false, error: "Invoice not found" }, { status: 404 });
+    }
 
     // ownership
     const userRole = String((gate as any).user?.role || "").toUpperCase();
@@ -186,18 +197,15 @@ export async function GET(req: NextRequest, ctx: any) {
       // ✅ total gst amount
       const totalGst = round2(gross - taxable);
 
-      // rates
       const halfRate = round2(gstRate / 2);
       const cgstRate = isIntra ? halfRate : 0;
       const sgstRate = isIntra ? halfRate : 0;
       const igstRate = isIntra ? 0 : gstRate;
 
-      // amounts
       const cgstAmt = isIntra ? round2(totalGst / 2) : 0;
       const sgstAmt = isIntra ? round2(totalGst / 2) : 0;
       const igstAmt = isIntra ? 0 : totalGst;
 
-      // ✅ Final amount should remain gross (because rate already includes GST)
       const amount = gross;
 
       return {
@@ -206,15 +214,15 @@ export async function GET(req: NextRequest, ctx: any) {
         hsn: asStr(it.hsn || it.hsnCode || ""),
         qty,
         unit: asStr(it.unit || "Pcs"),
-        price: rateIncl, // inclusive rate
-        taxable, // ex-GST base
+        price: rateIncl,
+        taxable,
         cgstRate,
         cgstAmt,
         sgstRate,
         sgstAmt,
         igstRate,
         igstAmt,
-        amount, // gross
+        amount,
       };
     });
 
