@@ -2,7 +2,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 
 type Retailer = {
   id: string;
@@ -11,12 +10,6 @@ type Retailer = {
   status?: string;
   city?: string | null;
   state?: string | null;
-};
-
-type RetailersResp = {
-  ok: boolean;
-  retailers?: Retailer[];
-  error?: string;
 };
 
 type OrderItemRow = {
@@ -77,18 +70,12 @@ function keyOf(s: string) {
   return String(s || "").trim().toLowerCase();
 }
 
-// invoice generate ho gaya => processed
 function isProcessed(o: OrderRow) {
   return Boolean(o?.invoice?.id || o?.invoice?.invoiceNo || o?.billed);
 }
 
 export default function RetailerOrdersClient() {
-  const router = useRouter();
-
-  const [retailers, setRetailers] = useState<Retailer[]>([]);
-  const [loadingRetailers, setLoadingRetailers] = useState(false);
   const [retailerId, setRetailerId] = useState("");
-
   const [retailerSearch, setRetailerSearch] = useState("");
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
@@ -110,27 +97,6 @@ export default function RetailerOrdersClient() {
   const [processing, setProcessing] = useState(false);
   const [processMsg, setProcessMsg] = useState<string>("");
 
-  async function loadRetailers() {
-    setLoadingRetailers(true);
-    setError("");
-    try {
-      const res = await fetch("/api/distributor/retailers?take=200", { cache: "no-store" });
-      const data = (await res.json().catch(() => null)) as RetailersResp | null;
-
-      if (!res.ok || !data?.ok) {
-        setRetailers([]);
-        setError(data?.error || `Retailers API failed (${res.status})`);
-        return;
-      }
-      setRetailers(Array.isArray(data.retailers) ? data.retailers : []);
-    } catch (e: any) {
-      setRetailers([]);
-      setError(e?.message || "Retailers load failed");
-    } finally {
-      setLoadingRetailers(false);
-    }
-  }
-
   async function loadOrders() {
     setLoadingOrders(true);
     setError("");
@@ -138,6 +104,7 @@ export default function RetailerOrdersClient() {
       const params = new URLSearchParams();
       params.set("take", "200");
       params.set("range", range);
+
       if (retailerId) params.set("retailerId", retailerId);
 
       if (range === "custom") {
@@ -154,6 +121,7 @@ export default function RetailerOrdersClient() {
         setError(data?.error || `Orders API failed (${res.status})`);
         return;
       }
+
       setOrders(Array.isArray(data.orders) ? data.orders : []);
     } catch (e: any) {
       setOrders([]);
@@ -162,11 +130,6 @@ export default function RetailerOrdersClient() {
       setLoadingOrders(false);
     }
   }
-
-  useEffect(() => {
-    loadRetailers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     loadOrders();
@@ -183,22 +146,48 @@ export default function RetailerOrdersClient() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [processOpen]);
 
+  const allRetailersFromOrders = useMemo(() => {
+    const map = new Map<string, Retailer>();
+
+    for (const o of orders) {
+      const r = o?.retailer;
+      if (!r?.id) continue;
+
+      if (!map.has(r.id)) {
+        map.set(r.id, {
+          id: r.id,
+          name: r.name || "Retailer",
+          phone: r.phone || null,
+          city: r.city || null,
+          state: null,
+          status: undefined,
+        });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "")
+    );
+  }, [orders]);
+
   const filteredRetailers = useMemo(() => {
     const q = retailerSearch.trim().toLowerCase();
-    const rank = (s?: string) => (s === "ACTIVE" ? 0 : s === "PENDING" ? 1 : 2);
 
-    const base = [...retailers].sort((a, b) => {
-      const r = rank(a.status) - rank(b.status);
-      if (r !== 0) return r;
-      return (a.name || "").localeCompare(b.name || "");
-    });
+    if (!q) return allRetailersFromOrders;
 
-    if (!q) return base;
-    return base.filter((r) => {
-      const hay = `${r.name || ""} ${r.city || ""} ${r.state || ""} ${r.phone || ""} ${r.status || ""}`.toLowerCase();
+    return allRetailersFromOrders.filter((r) => {
+      const hay = `${r.name || ""} ${r.city || ""} ${r.state || ""} ${r.phone || ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [retailers, retailerSearch]);
+  }, [allRetailersFromOrders, retailerSearch]);
+
+  useEffect(() => {
+    if (!retailerId) return;
+    const exists = allRetailersFromOrders.some((r) => r.id === retailerId);
+    if (!exists) {
+      setRetailerId("");
+    }
+  }, [allRetailersFromOrders, retailerId]);
 
   async function loadBatchesForModal(productNames: string[]) {
     setBatchesLoading(true);
@@ -290,6 +279,7 @@ export default function RetailerOrdersClient() {
 
   const batchesByProduct = useMemo(() => {
     const map = new Map<string, BatchRow[]>();
+
     for (const b of batches) {
       const k = keyOf(b.productName);
       if (!k) continue;
@@ -306,6 +296,7 @@ export default function RetailerOrdersClient() {
       });
       map.set(k, arr);
     }
+
     return map;
   }, [batches]);
 
@@ -314,6 +305,7 @@ export default function RetailerOrdersClient() {
 
     setProcessing(true);
     setProcessMsg("");
+
     try {
       const items = processOrder.items || [];
       if (!items.length) {
@@ -351,6 +343,7 @@ export default function RetailerOrdersClient() {
       );
 
       const data = await res.json().catch(() => null);
+
       if (!res.ok || !data?.ok) {
         setProcessMsg(data?.error || `Generate invoice failed (${res.status})`);
         return;
@@ -415,13 +408,12 @@ export default function RetailerOrdersClient() {
               <button
                 type="button"
                 onClick={async () => {
-                  await loadRetailers();
                   await loadOrders();
                 }}
                 className="rounded-xl border px-4 py-2 text-sm font-extrabold hover:bg-gray-50"
-                disabled={loadingRetailers || loadingOrders}
+                disabled={loadingOrders}
               >
-                {loadingRetailers || loadingOrders ? "Refreshing..." : "Refresh"}
+                {loadingOrders ? "Refreshing..." : "Refresh"}
               </button>
             </div>
           </div>
@@ -442,8 +434,7 @@ export default function RetailerOrdersClient() {
                 onChange={(e) => setRetailerSearch(e.target.value)}
               />
               <div className="mt-2 text-xs text-gray-600 font-semibold">
-                Total retailers: <b>{retailers.length}</b>
-                {loadingRetailers ? " • Loading..." : ""}
+                Total retailers: <b>{filteredRetailers.length}</b>
               </div>
             </div>
 
