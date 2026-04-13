@@ -17,6 +17,10 @@ type LedgerRow = {
   amount: number;
   reference?: string | null;
   narration?: string | null;
+
+  // ✅ added for invoice opening
+  referenceId?: string | null;
+  referenceNo?: string | null;
 };
 
 type EntriesResponse = {
@@ -71,7 +75,6 @@ export default function RetailerLedgerPage({
 }: {
   params: Promise<{ retailerId: string }>;
 }) {
-  // ✅ Next.js 15/16 fix: params is Promise
   const { retailerId } = use(params);
 
   const [loading, setLoading] = useState(false);
@@ -82,11 +85,9 @@ export default function RetailerLedgerPage({
   const [entries, setEntries] = useState<LedgerRow[]>([]);
   const [total, setTotal] = useState(0);
 
-  // filters
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
 
-  // add payment modal
   const [payOpen, setPayOpen] = useState(false);
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("CASH");
   const [amount, setAmount] = useState<string>("");
@@ -98,10 +99,9 @@ export default function RetailerLedgerPage({
     setErr(null);
 
     try {
-      // ✅ summary
       const sRes = await fetch(
         `/api/distributor/retailer-ledger/summary?retailerId=${encodeURIComponent(retailerId)}`,
-        { cache: "no-store" }
+        { cache: "no-store", credentials: "include" }
       );
       const sJson = (await sRes.json().catch(() => null)) as SummaryResponse | null;
 
@@ -114,10 +114,9 @@ export default function RetailerLedgerPage({
       }
       setSummary(sJson);
 
-      // ✅ entries
       const eRes = await fetch(
         `/api/distributor/retailer-ledger/entries?retailerId=${encodeURIComponent(retailerId)}&take=200`,
-        { cache: "no-store" }
+        { cache: "no-store", credentials: "include" }
       );
       const eJson = (await eRes.json().catch(() => null)) as EntriesResponse | null;
 
@@ -142,7 +141,6 @@ export default function RetailerLedgerPage({
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [retailerId]);
 
   const totals = summary?.totals || { totalDebit: 0, totalCredit: 0, receivable: 0 };
@@ -158,7 +156,7 @@ export default function RetailerLedgerPage({
     let list = !s
       ? entries
       : entries.filter((x) => {
-          const ref = (x.reference || "").toLowerCase();
+          const ref = (x.referenceNo || x.reference || "").toLowerCase();
           const nar = (x.narration || "").toLowerCase();
           const typ = (x.type || "").toLowerCase();
           const amt = String(x.amount || 0);
@@ -166,18 +164,20 @@ export default function RetailerLedgerPage({
         });
 
     list = [...list].sort((a, b) => {
+      const aRef = a.referenceNo || a.reference || "";
+      const bRef = b.referenceNo || b.reference || "";
+
       if (sort === "type") return (a.type || "").localeCompare(b.type || "");
-      if (sort === "ref") return (a.reference || "").localeCompare(b.reference || "");
+      if (sort === "ref") return aRef.localeCompare(bRef);
       if (sort === "high") return num(b.amount) - num(a.amount);
       if (sort === "low") return num(a.amount) - num(b.amount);
       if (sort === "oldest") return asTime(a.date) - asTime(b.date);
-      return asTime(b.date) - asTime(a.date); // recent
+      return asTime(b.date) - asTime(a.date);
     });
 
     return list;
   }, [entries, q, sort]);
 
-  // ✅ Running balance (oldest -> newest compute, then map back)
   const rowsWithBalance = useMemo(() => {
     const asc = [...filteredSorted].sort((a, b) => asTime(a.date) - asTime(b.date));
     let bal = 0;
@@ -221,7 +221,6 @@ export default function RetailerLedgerPage({
         return;
       }
 
-      // reset & refresh
       setPayOpen(false);
       setAmount("");
       setUtrNo("");
@@ -236,7 +235,6 @@ export default function RetailerLedgerPage({
 
   return (
     <div className="space-y-5">
-      {/* Header */}
       <div className="bg-white rounded-2xl border p-4 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div className="min-w-0">
@@ -280,7 +278,6 @@ export default function RetailerLedgerPage({
         ) : null}
       </div>
 
-      {/* Totals */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Kpi title="Total Debit (Sales)" value={inr(totals.totalDebit)} />
         <Kpi title="Total Credit (Received)" value={inr(totals.totalCredit)} />
@@ -288,7 +285,6 @@ export default function RetailerLedgerPage({
         <Kpi title="Entries" value={String(total)} />
       </div>
 
-      {/* Controls */}
       <div className="bg-white rounded-2xl border p-4 shadow-sm">
         <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
           <div className="text-sm text-gray-600">
@@ -318,12 +314,10 @@ export default function RetailerLedgerPage({
         </div>
       </div>
 
-      {/* All entries table */}
       <Card title={`Ledger Entries • ${rowsWithBalance.length}`}>
         <Table rows={rowsWithBalance} />
       </Card>
 
-      {/* Payment modal */}
       {payOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-3">
           <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl overflow-hidden">
@@ -421,8 +415,6 @@ export default function RetailerLedgerPage({
   );
 }
 
-/* ---------------- UI bits ---------------- */
-
 function Kpi({
   title,
   value,
@@ -492,8 +484,17 @@ function Table({ rows }: { rows: (LedgerRow & { balance?: number })[] }) {
               <td className="py-2 px-3 text-right font-semibold text-gray-900">
                 {inr(Number(r.amount || 0))}
               </td>
-              <td className="py-2 px-3 whitespace-nowrap text-gray-700">
-                {r.reference || "—"}
+              <td className="py-2 px-3 whitespace-nowrap">
+                {r.referenceId ? (
+                  <Link
+                    href={`/distributor/retailer-orders/invoices/${r.referenceId}`}
+                    className="text-blue-600 hover:underline font-semibold"
+                  >
+                    {r.referenceNo || r.reference || "—"}
+                  </Link>
+                ) : (
+                  <span className="text-gray-700">{r.reference || "—"}</span>
+                )}
               </td>
               <td className="py-2 px-3 text-gray-700">{r.narration || "—"}</td>
               <td className="py-2 px-3 text-right font-extrabold">

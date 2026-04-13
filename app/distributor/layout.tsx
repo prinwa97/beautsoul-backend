@@ -13,7 +13,6 @@ type DistMeta = {
   status?: string | null;
 };
 
-/* ✅ Confusion-free tab structure */
 const TABS = [
   { href: "/distributor/dashboard", label: "Dashboard" },
   { href: "/distributor/stock", label: "Stock" },
@@ -34,13 +33,37 @@ export default function DistributorLayout({ children }: { children: React.ReactN
 
     (async () => {
       try {
-        const res = await fetch("/api/distributor/dashboard", { cache: "no-store" });
+        const res = await fetch("/api/distributor/dashboard", {
+          cache: "no-store",
+          credentials: "include",
+        });
+
         const data = await res.json().catch(() => null);
 
         if (!alive) return;
 
-        if (res.ok && data?.distributor?.name) setDist(data.distributor as DistMeta);
-        else setDist(null);
+        const raw = data?.distributor || data?.meta?.distributor || null;
+
+        const normalized: DistMeta | null = raw
+          ? {
+              id: String(raw.id || raw.distributorId || ""),
+              name: String(
+                raw.name ||
+                  raw.firmName ||
+                  raw.companyName ||
+                  raw.tradeName ||
+                  ""
+              ).trim(),
+              code: raw.code || raw.distributorCode || null,
+              status: raw.status || null,
+            }
+          : null;
+
+        if (res.ok && normalized?.name) {
+          setDist(normalized);
+        } else {
+          setDist(null);
+        }
       } catch {
         if (!alive) return;
         setDist(null);
@@ -61,7 +84,6 @@ export default function DistributorLayout({ children }: { children: React.ReactN
   return (
     <div className="min-h-screen bg-[#fff7f6]">
       <AppHeader
-        /* ✅ compact header height */
         logoClassName="h-12 md:h-14 w-auto"
         logoWrapClassName="px-4 py-2"
         titleRow={
@@ -93,7 +115,6 @@ export default function DistributorLayout({ children }: { children: React.ReactN
             </div>
           </div>
         }
-        /* ✅ Right side column: Logout top, Tabs below */
         right={
           <div className="flex flex-col items-end justify-between h-full pr-2 py-1">
             <div className="flex items-start">
@@ -109,7 +130,6 @@ export default function DistributorLayout({ children }: { children: React.ReactN
             </div>
           </div>
         }
-        /* ✅ nav empty (tabs moved to right block) */
         nav={null as any}
       />
 

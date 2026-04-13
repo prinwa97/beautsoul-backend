@@ -56,7 +56,6 @@ async function readSessionUser(): Promise<SessionUser | null> {
 
   if (!raw0) return null;
 
-  // 1) direct json
   const direct = safeJsonParse<SessionUser>(stripQuotes(raw0));
   if (direct?.id) {
     return {
@@ -66,7 +65,6 @@ async function readSessionUser(): Promise<SessionUser | null> {
     };
   }
 
-  // 2) decodeURIComponent json
   let decoded = raw0;
   try {
     decoded = decodeURIComponent(raw0);
@@ -99,27 +97,52 @@ export async function POST(
       );
     }
 
-    // ✅ Distributor auth (single source of truth)
     const distributorId = await requireDistributorId();
     if (!distributorId) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const session = await readSessionUser();
+    if (!session?.id) {
+      return NextResponse.json(
+        { ok: false, error: "Session user missing. Please login again." },
+        { status: 401 }
+      );
+    }
+
+    const receivedByUserId = String(session.id).trim();
+    if (!receivedByUserId) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid session user. Please login again." },
+        { status: 401 }
+      );
+    }
+
+    const userExists = await prisma.user.findUnique({
+      where: { id: receivedByUserId },
+      select: { id: true, role: true, distributorId: true },
+    });
+
+    if (!userExists) {
+      return NextResponse.json(
+        { ok: false, error: "Logged-in user not found in database. Please login again." },
+        { status: 400 }
+      );
     }
 
     const body = (await req.json().catch(() => null)) as Body | null;
-    const items = Array.isArray(body?.items) ? body!.items! : [];
+    const items = Array.isArray(body?.items) ? body.items : [];
 
     if (!items.length) {
-      return NextResponse.json({ ok: false, error: "Items required" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Items required" },
+        { status: 400 }
+      );
     }
 
-    // ✅ session user (for receivedBy). fallback if missing
-    const session = await readSessionUser();
-
-    // If your receivedBy MUST be a User.id and not Distributor.id, then you should
-    // instead fetch user by phone/role etc. But for now we do safe fallback:
-    const receivedByUserId = session?.id ? String(session.id) : String(distributorId);
-
-    // ✅ Load order scoped to distributor (prevents forbidden confusion)
     const order = await prisma.inboundOrder.findFirst({
       where: { id: inboundOrderId, forDistributorId: distributorId },
       include: { items: true },
@@ -134,19 +157,23 @@ export async function POST(
 
     const itemById = new Map(order.items.map((x) => [x.id, x]));
 
-    // ✅ Validate input + duplicates
     const seen = new Set<string>();
     for (const it of items) {
       const itemId = String(it?.itemId || "").trim();
       if (!itemId) {
-        return NextResponse.json({ ok: false, error: "itemId missing" }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: "itemId missing" },
+          { status: 400 }
+        );
       }
+
       if (!itemById.has(itemId)) {
         return NextResponse.json(
           { ok: false, error: `Invalid itemId: ${itemId}` },
           { status: 400 }
         );
       }
+
       if (seen.has(itemId)) {
         return NextResponse.json(
           { ok: false, error: `Duplicate itemId: ${itemId}` },
@@ -165,6 +192,7 @@ export async function POST(
           { status: 400 }
         );
       }
+
       if (received > ordered) {
         return NextResponse.json(
           { ok: false, error: "Received qty cannot exceed ordered qty" },
@@ -174,29 +202,27 @@ export async function POST(
     }
 
     const anyShort = items.some((it) => {
-      const src = itemById.get(String(it.itemId))!;
+      const src = itemById.get(String(it.itemId || "").trim())!;
       return num(it.receivedQtyPcs) < num(src.orderedQtyPcs);
     });
 
     const receiveStatus = anyShort ? "PARTIAL_RECEIVED" : "RECEIVED";
 
     const saved = await prisma.$transaction(async (tx) => {
-      // 1) Create receive header
       const rec = await tx.inboundReceive.create({
         data: {
           inboundOrder: { connect: { id: inboundOrderId } },
           distributor: { connect: { id: distributorId } },
-          receivedBy: { connect: { id: receivedByUserId } }, // ✅ robust
+          receivedBy: { connect: { id: receivedByUserId } },
           status: receiveStatus,
           receivedAt: new Date(),
         },
         select: { id: true },
       });
 
-      // 2) Receive items
       await tx.inboundReceiveItem.createMany({
         data: items.map((it) => {
-          const src = itemById.get(String(it.itemId))!;
+          const src = itemById.get(String(it.itemId || "").trim())!;
           const ordered = Math.max(0, Math.floor(num(src.orderedQtyPcs)));
           const received = clampInt(it.receivedQtyPcs, 0, ordered);
 
@@ -208,12 +234,11 @@ export async function POST(
             shortQtyPcs: Math.max(0, ordered - received),
           };
         }),
-        skipDuplicates: true, // ✅ safety
+        skipDuplicates: true,
       });
 
-      // 3) Update Inventory + InventoryBatch
       for (const it of items) {
-        const src = itemById.get(String(it.itemId))!;
+        const src = itemById.get(String(it.itemId || "").trim())!;
         const ordered = Math.max(0, Math.floor(num(src.orderedQtyPcs)));
         const received = clampInt(it.receivedQtyPcs, 0, ordered);
 
@@ -263,11 +288,9 @@ export async function POST(
         }
       }
 
-      // 4) Update order status
       await tx.inboundOrder.update({
         where: { id: inboundOrderId },
         data: {
-          // ✅ fully received => DELIVERED, partial => IN_TRANSIT
           status: receiveStatus === "RECEIVED" ? "DELIVERED" : "IN_TRANSIT",
         },
       });
@@ -282,6 +305,17 @@ export async function POST(
     });
   } catch (e: any) {
     console.error("Receive route error:", e);
+
+    if (e?.code === "P2025") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Required related record not found. Please login again and retry.",
+        },
+        { status: 400 }
+      );
+    }
+
     const msg = e?.message || "Server error";
     const status = msg.toLowerCase().includes("unauthor") ? 401 : 500;
     return NextResponse.json({ ok: false, error: msg }, { status });

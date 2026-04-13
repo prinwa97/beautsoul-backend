@@ -37,7 +37,7 @@ function startOfYear() {
 }
 
 function money(n: number) {
-  return Math.round(n || 0);
+  return Math.round(Number(n || 0));
 }
 
 function getPeriodStart(period: Period) {
@@ -71,6 +71,17 @@ export async function GET(req: NextRequest) {
     const now = new Date();
     const periodFrom = getPeriodStart(period);
 
+    // ✅ Use only real Distributor fields from your schema
+    const distributor = await prisma.distributor.findUnique({
+      where: { id: distributorId },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        status: true,
+      },
+    });
+
     const [retailersCount, activeRetailersCount, fieldOfficersCount] =
       await Promise.all([
         prisma.retailer.count({ where: { distributorId } }),
@@ -93,8 +104,8 @@ export async function GET(req: NextRequest) {
       let received = 0;
 
       for (const r of rows) {
-        if (r.type === "DEBIT") sales += r.amount;
-        else received += r.amount;
+        if (r.type === "DEBIT") sales += Number(r.amount || 0);
+        else received += Number(r.amount || 0);
       }
 
       return {
@@ -116,8 +127,8 @@ export async function GET(req: NextRequest) {
     let totalReceivedAll = 0;
 
     for (const r of totalAgg) {
-      if (r.type === "DEBIT") totalSalesAll += r._sum.amount || 0;
-      else totalReceivedAll += r._sum.amount || 0;
+      if (r.type === "DEBIT") totalSalesAll += Number(r._sum.amount || 0);
+      else totalReceivedAll += Number(r._sum.amount || 0);
     }
 
     const totalPending = money(totalSalesAll - totalReceivedAll);
@@ -171,10 +182,10 @@ export async function GET(req: NextRequest) {
       };
 
       if (r.type === "DEBIT") {
-        cur.sales += r.amount;
+        cur.sales += Number(r.amount || 0);
         cur.hasDebit = true;
       } else {
-        cur.received += r.amount;
+        cur.received += Number(r.amount || 0);
       }
 
       agg.set(r.retailerId, cur);
@@ -187,8 +198,6 @@ export async function GET(req: NextRequest) {
 
     const nameMap = new Map(retailerMeta.map((r) => [r.id, r]));
 
-    // IMPORTANT FIX:
-    // no slice here, so dashboard donut can build Top 6 + Others correctly
     const topRetailers = [...agg.entries()]
       .map(([id, v]) => {
         const meta = nameMap.get(id);
@@ -231,6 +240,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       distributorId,
+      distributor: distributor
+        ? {
+            id: distributor.id,
+            name: distributor.name || "",
+            code: distributor.code || null,
+            status: distributor.status || null,
+          }
+        : null,
       period,
       counts: {
         retailers: retailersCount,

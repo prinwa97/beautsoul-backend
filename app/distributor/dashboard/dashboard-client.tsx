@@ -149,7 +149,7 @@ export default function DashboardClient() {
         if (mode === "year") days = 365;
         if (mode === "today") days = 1;
 
-        const res = await fetch(`/api/distributor/analytics/sales-trend?days=${days}`, {
+        const res = await fetch(`/api/distributor/dashboard/analytics/sales-trend?days=${days}`, {
           cache: "no-store",
         });
         const j = await res.json().catch(() => null);
@@ -173,7 +173,7 @@ export default function DashboardClient() {
 
     try {
       const res = await fetch(
-        `/api/distributor/analytics/product-retailer-ranking?productName=${encodeURIComponent(
+        `/api/distributor/dashboard/analytics/product-retailer-ranking?productName=${encodeURIComponent(
           productName
         )}&take=5`,
         { cache: "no-store" }
@@ -199,7 +199,7 @@ export default function DashboardClient() {
 
     try {
       const res = await fetch(
-        `/api/distributor/analytics/retailer-sales-summary?retailerId=${encodeURIComponent(
+        `/api/distributor/dashboard/analytics/retailer-sales-summary?retailerId=${encodeURIComponent(
           retailerId
         )}&take=5`,
         { cache: "no-store" }
@@ -353,7 +353,7 @@ export default function DashboardClient() {
 
         <Card>
           <h3 className="mb-3 font-semibold">Top 5 Debtors</h3>
-          <div className="text-xs text-gray-500 mb-3">{modeLabel}</div>
+          <div className="mb-3 text-xs text-gray-500">{modeLabel}</div>
 
           <div className="space-y-2">
             {(data?.lists?.topDefaulters || []).length === 0 ? (
